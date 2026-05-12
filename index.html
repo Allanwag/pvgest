@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1B5E20">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+<title>PVGest</title>
+</head>
+<body>
+
+<!-- ======= LOGIN ======= -->
+<div id="loginScreen" class="screen active">
+  <div class="login-wrap">
+    <div class="login-logo">
+      <div class="logo-mark">🌿</div>
+      <h1>PVGest</h1>
+      <p>Gestão de Pulverização</p>
+    </div>
+    <div id="userSelect">
+      <p class="login-hint">Selecione seu perfil</p>
+      <div id="userCards" class="user-cards"></div>
+    </div>
+    <div id="pinSection" class="hidden">
+      <p class="login-hint" id="pinHint"></p>
+      <div class="pin-dots" id="pinDots">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <p class="pin-error hidden" id="pinError">PIN incorreto. Tente novamente.</p>
+      <div class="pin-pad">
+        <button onclick="pinKey('1')">1</button><button onclick="pinKey('2')">2</button><button onclick="pinKey('3')">3</button>
+        <button onclick="pinKey('4')">4</button><button onclick="pinKey('5')">5</button><button onclick="pinKey('6')">6</button>
+        <button onclick="pinKey('7')">7</button><button onclick="pinKey('8')">8</button><button onclick="pinKey('9')">9</button>
+        <button onclick="pinCancel()" class="pin-util">✕</button>
+        <button onclick="pinKey('0')">0</button>
+        <button onclick="pinBack()" class="pin-util">⌫</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======= APP ======= -->
+<div id="appScreen" class="screen hidden">
+  <header class="app-header">
+    <div class="hdr-left">
+      <span class="hdr-logo">PVGest</span>
+      <span class="hdr-prop" id="hdrProp"></span>
+    </div>
+    <div class="hdr-right" onclick="toggleUserMenu()">
+      <div class="avatar" id="hdrAvatar"></div>
+      <span id="hdrName"></span>
+      <span class="chevron">▾</span>
+    </div>
+  </header>
+
+  <div class="user-menu hidden" id="userMenu">
+    <button id="menuConfig" onclick="navTo('config');closeUserMenu()">⚙️ Configurações</button>
+    <button onclick="logout()">🚪 Sair</button>
+  </div>
+
+  <main id="appMain">
+    <div id="tab-dt"        class="tab-content"></div>
+    <div id="tab-talhoes"   class="tab-content"></div>
+    <div id="tab-receitas"  class="tab-content"></div>
+    <div id="tab-estoque"   class="tab-content"></div>
+    <div id="tab-relatorios"class="tab-content"></div>
+    <div id="tab-execucao"  class="tab-content"></div>
+    <div id="tab-config"    class="tab-content"></div>
+  </main>
+
+  <nav class="bot-nav" id="botNav"></nav>
+</div>
+
+<!-- ======= MODAL ======= -->
+<div class="modal-overlay hidden" id="modalOverlay" onclick="handleOverlayClick(event)">
+  <div class="modal-sheet" id="modalSheet"></div>
+</div>
+
+<!-- ======= TOAST ======= -->
+<div class="toast hidden" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
