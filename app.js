@@ -227,6 +227,7 @@ function windStatus(w) {
 }
 
 function renderDT() {
+  document.querySelectorAll('.fab').forEach(f=>f.remove());
   const wb = calcWetBulb(dtT,dtRh);
   const dt = dtT - wb;
   const dp = calcDewPoint(dtT,dtRh);
@@ -352,7 +353,7 @@ function renderTalhoes() {
   const el = document.getElementById('tab-talhoes');
   const list = DB.talhoes.length ? DB.talhoes.map(t => {
     const aps = DB.aplicacoes.filter(a=>a.talhao===t.id);
-    const last = aps.sort((a,b)=>b.data>a.data?1:-1)[0];
+    const last = aps.sort((a,b)=>(b.data||'').localeCompare(a.data||''))[0];
     return `<div class="list-card">
       <div class="list-item" onclick="openTalhaoDetail('${t.id}')">
         <div class="li-icon" style="background:var(--g50);color:var(--g800)">🗺️</div>
@@ -378,17 +379,12 @@ function renderTalhoes() {
   el.innerHTML = `<div class="page-hdr"><div><div class="page-title">Talhões</div>
     <div class="page-sub">${DB.talhoes.length} cadastrados</div></div></div>${list}`;
   el.insertAdjacentHTML('beforeend','<div style="height:80px"></div>');
-  if (!document.querySelector('.fab-talhao')) {
-    const fab = document.createElement('button');
-    fab.className='fab fab-talhao'; fab.textContent='+'; fab.title='Novo talhão';
-    fab.onclick=()=>openTalhaoForm();
-    document.getElementById('appScreen').appendChild(fab);
-  }
+  manageFab('fab-talhao', ()=>openTalhaoForm());
 }
 
 function openTalhaoDetail(id) {
   const t = byId(DB.talhoes, id); if (!t) return;
-  const aps = DB.aplicacoes.filter(a=>a.talhao===id).sort((a,b)=>b.data>a.data?1:-1);
+  const aps = DB.aplicacoes.filter(a=>a.talhao===id).sort((a,b)=>(b.data||'').localeCompare(a.data||''));
   const totalCusto = aps.reduce((s,a)=>s+(a.custo_total||0),0);
   openModal(`
     <div class="modal-hdr"><span class="modal-title">📍 ${esc(t.nome)}</span>
@@ -652,7 +648,7 @@ function renderReceitas() {
       <div class="li-actions">
         <button class="btn btn-secondary btn-sm" onclick="openReceitaForm('${r.id}')">✏️ Editar</button>
         <button class="btn btn-secondary btn-sm" onclick="openCalculadora('${r.id}')">📐 Calcular</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteReceita('${r.id}')">🗑️</button>
+        ${can('manageReceitas')?`<button class="btn btn-danger btn-sm" onclick="deleteReceita('${r.id}')">🗑️</button>`:''}
       </div>
     </div>`;
   }).join('') : `<div class="empty-state"><div class="empty-icon">🧪</div>
@@ -705,7 +701,10 @@ function openReceitaForm(id) {
 }
 
 function renderReceitaFormModal(id, r) {
-  const prodOptions = DB.produtos.map(p=>`<option value="${p.id}">${esc(p.nome)} (${p.unidade})</option>`).join('');
+  const hasProdutos = DB.produtos.length > 0;
+  const prodOptions = hasProdutos
+    ? DB.produtos.map(p=>`<option value="${p.id}">${esc(p.nome)} (${p.unidade})</option>`).join('')
+    : '<option value="">— Nenhum produto cadastrado —</option>';
   const itemsHtml = receitaItems.map((it,idx)=>{
     const p = byId(DB.produtos,it.produto);
     return `<div class="prod-item" style="align-items:center">
@@ -735,14 +734,15 @@ function renderReceitaFormModal(id, r) {
 
       <div class="card card-body" style="background:var(--surf3)">
         <div class="sec-lbl">Adicionar produto</div>
-        <select class="form-input mb-1" id="fRProd" style="margin-bottom:.5rem">${prodOptions}</select>
+        ${!hasProdutos?'<div class="alert alert-warn" style="font-size:.8rem;margin-bottom:.5rem">⚠️ Cadastre produtos no Estoque antes de montar a receita.</div>':''}
+        <select class="form-input mb-1" id="fRProd" style="margin-bottom:.5rem" ${!hasProdutos?'disabled':''}>${prodOptions}</select>
         <div class="form-row">
           <div class="form-group"><label class="form-label">Dose</label>
-            <input class="form-input" id="fRDose" type="number" step=".01" min="0" placeholder="0.0"></div>
+            <input class="form-input" id="fRDose" type="number" step=".01" min="0" placeholder="0.0" ${!hasProdutos?'disabled':''}></div>
           <div class="form-group"><label class="form-label">Unidade</label>
-            <select class="form-input" id="fRDoseUn">${['L/ha','mL/ha','kg/ha','g/ha'].map(u=>`<option>${u}</option>`).join('')}</select></div>
+            <select class="form-input" id="fRDoseUn" ${!hasProdutos?'disabled':''}>${['L/ha','mL/ha','kg/ha','g/ha'].map(u=>`<option>${u}</option>`).join('')}</select></div>
         </div>
-        <button class="btn btn-outline btn-sm" onclick="addReceitaItem()">+ Adicionar</button>
+        <button class="btn btn-outline btn-sm" onclick="addReceitaItem()" ${!hasProdutos?'disabled':''}>+ Adicionar</button>
       </div>
 
       <div class="form-group mt-2"><label class="form-label">Observações / Recomendações</label>
@@ -763,9 +763,20 @@ function addReceitaItem() {
   const p = byId(DB.produtos, prodId);
   if (!p) return;
   receitaItems.push({ produto:prodId, dose, unidade:un, nome_livre:p.nome });
+  // Preserve form values before re-render
+  const nome = document.getElementById('fRNome')?.value;
+  const vol  = document.getElementById('fRVol')?.value;
+  const alvo = document.getElementById('fRAlvo')?.value;
+  const obs  = document.getElementById('fRObs')?.value;
+  const cultura = document.getElementById('fRCultura')?.value;
   const id = document.querySelector('#modalSheet [data-id]')?.dataset.id||'';
   const r = id ? byId(DB.receitas,id) : null;
   renderReceitaFormModal(id||'', r);
+  if (nome) document.getElementById('fRNome').value=nome;
+  if (vol)  document.getElementById('fRVol').value=vol;
+  if (alvo) document.getElementById('fRAlvo').value=alvo;
+  if (obs)  document.getElementById('fRObs').value=obs;
+  if (cultura) document.getElementById('fRCultura').value=cultura;
 }
 
 function removeReceitaItem(idx) {
@@ -777,11 +788,13 @@ function removeReceitaItem(idx) {
   const vol  = document.getElementById('fRVol')?.value;
   const alvo = document.getElementById('fRAlvo')?.value;
   const obs  = document.getElementById('fRObs')?.value;
+  const cultura = document.getElementById('fRCultura')?.value;
   renderReceitaFormModal(id||'', r);
   if (nome) document.getElementById('fRNome').value=nome;
   if (vol)  document.getElementById('fRVol').value=vol;
   if (alvo) document.getElementById('fRAlvo').value=alvo;
   if (obs)  document.getElementById('fRObs').value=obs;
+  if (cultura) document.getElementById('fRCultura').value=cultura;
 }
 
 function saveReceita(id) {
@@ -812,7 +825,7 @@ function openCalculadora(receitaId) {
   openModal(`
     <div class="modal-hdr"><span class="modal-title">📐 Calcular Receita</span>
       <button class="modal-close" onclick="closeModal()">✕</button></div>
-    <div class="modal-body">
+    <div class="modal-body" data-receita-id="${receitaId}">
       <div style="font-size:.9rem;font-weight:600;color:var(--g800);margin-bottom:.75rem">🧪 ${esc(r.nome)}</div>
       <div class="form-group"><label class="form-label">Escolha o talhão</label>
         <select class="form-input" id="calcTalhao" onchange="calcAreaFromTalhao()">
@@ -829,14 +842,9 @@ function calcAreaFromTalhao() {
   if (sel.value) {
     document.getElementById('calcArea').value = sel.value;
   }
-  // get current receita ID from modal context
-  const btn = document.querySelector('#calcOutput');
-  // trigger calc with area value
-  const area = parseFloat(document.getElementById('calcArea').value)||0;
-  // find receita id from open modal - just recalc
-  const rNome = document.querySelector('#modalSheet .modal-body [style*="g800"]')?.textContent?.replace('🧪 ','');
-  const r = DB.receitas.find(x=>x.nome===rNome);
-  if (r) calcResult(r.id);
+  // Get receita ID from data attribute
+  const receitaId = document.querySelector('#modalSheet .modal-body[data-receita-id]')?.dataset.receitaId;
+  if (receitaId) calcResult(receitaId);
 }
 
 function calcResult(receitaId) {
@@ -881,7 +889,7 @@ function calcResult(receitaId) {
 
 // ──────────── APLICAÇÕES ────────────
 function openNovaAplicacao(talhaoId) {
-  const tOpts = DB.talhoes.map(t=>`<option value="${t.id}" ${t.id===talhaoId?'selected':''}>${esc(t.nome)} — ${t.area} ha</option>`).join('');
+  const tOpts = `<option value="">— Selecione o talhão —</option>` + DB.talhoes.map(t=>`<option value="${t.id}" ${t.id===talhaoId?'selected':''}>${esc(t.nome)} — ${t.area} ha</option>`).join('');
   const rOpts = DB.receitas.map(r=>`<option value="${r.id}">${esc(r.nome)}</option>`).join('');
   const wb = calcWetBulb(dtT,dtRh);
   const dt = (dtT-wb).toFixed(1);
@@ -948,7 +956,7 @@ function autoFillArea() {
 function checkRetrabalho(talhaoId) {
   if (!talhaoId) return null;
   const limite = DB.config.retrabalho_dias||21;
-  const aps = DB.aplicacoes.filter(a=>a.talhao===talhaoId).sort((a,b)=>b.data>a.data?1:-1);
+  const aps = DB.aplicacoes.filter(a=>a.talhao===talhaoId).sort((a,b)=>(b.data||'').localeCompare(a.data||''));
   if (!aps.length) return null;
   const last = aps[0];
   const dias = Math.floor((new Date()-new Date(last.data+'T00:00:00'))/(1000*60*60*24));
@@ -972,6 +980,9 @@ function saveAplicacao() {
   const dep = DB.config.depreciacao_ha||0;
   const delta_t = parseFloat(document.getElementById('fADT')?.value)||0;
 
+  // Gerar ID da aplicação uma única vez
+  const aplicId = uid();
+
   // Calcula custo de produto da receita
   let custo_produto = 0;
   if (receitaId) {
@@ -986,7 +997,7 @@ function saveAplicacao() {
       if (p) {
         const consumo = i.dose*area;
         p.estoque_atual = Math.max(0, p.estoque_atual-consumo);
-        DB.movimentos.push({ id:uid(), produto:i.produto, tipo:'saida', qtd:consumo, preco:p.preco, data, aplicacao:uid(), obs:`Aplicação em ${byId(DB.talhoes,talhaoId)?.nome}`, usuario:currentUser.id });
+        DB.movimentos.push({ id:uid(), produto:i.produto, tipo:'saida', qtd:consumo, preco:p.preco, data, aplicacao:aplicId, obs:`Aplicação em ${byId(DB.talhoes,talhaoId)?.nome}`, usuario:currentUser.id });
       }
     });
   }
@@ -995,7 +1006,7 @@ function saveAplicacao() {
   const custo_total = custo_produto + custo_operacional;
 
   const aplic = {
-    id:uid(), data, talhao:talhaoId, receita:receitaId, area_ha:area,
+    id:aplicId, data, talhao:talhaoId, receita:receitaId, area_ha:area,
     delta_t, temp:parseFloat(document.getElementById('fATemp')?.value)||dtT,
     rh:parseFloat(document.getElementById('fARh')?.value)||dtRh,
     vento:parseFloat(document.getElementById('fAVento')?.value)||dtWind,
@@ -1014,6 +1025,7 @@ function saveAplicacao() {
 
 // ──────────── EXECUÇÃO (Tratorista) ────────────
 function renderExecucao() {
+  document.querySelectorAll('.fab').forEach(f=>f.remove());
   const el = document.getElementById('tab-execucao');
   const wb = calcWetBulb(dtT,dtRh);
   const dt = dtT-wb;
@@ -1061,6 +1073,7 @@ function renderExecucao() {
 
 // ──────────── RELATÓRIOS ────────────
 function renderRelatorios() {
+  document.querySelectorAll('.fab').forEach(f=>f.remove());
   if (!can('viewRelatorios')) {
     document.getElementById('tab-relatorios').innerHTML='<div class="empty-state"><div class="empty-icon">🔒</div><div class="empty-title">Acesso restrito</div></div>';
     return;
@@ -1116,6 +1129,7 @@ function renderRelatorios() {
 
 // ──────────── CONFIG ────────────
 function renderConfig() {
+  document.querySelectorAll('.fab').forEach(f=>f.remove());
   const el = document.getElementById('tab-config');
   const usersHtml = DB.usuarios.map(u=>{
     const p = PERFIS[u.perfil]||{};
@@ -1270,7 +1284,7 @@ function exportPDF() {
     const aps = DB.aplicacoes.filter(a=>a.talhao===t.id);
     const custo = aps.reduce((s,a)=>s+(a.custo_total||0),0);
     const ha = aps.reduce((s,a)=>s+(a.area_ha||0),0);
-    return [esc(t.nome), t.area+' ha', esc(t.cultura||'—'), aps.length, fmtNum(ha)+' ha', fmtMoney(custo), ha>0?fmtMoney(custo/ha):'—'];
+    return [t.nome, t.area+' ha', t.cultura||'—', aps.length, fmtNum(ha)+' ha', fmtMoney(custo), ha>0?fmtMoney(custo/ha):'—'];
   });
   doc.autoTable({
     startY:y, margin:{left:14,right:14},
@@ -1288,7 +1302,7 @@ function exportPDF() {
   const apRows = DB.aplicacoes.slice(0,30).map(a=>{
     const t = byId(DB.talhoes,a.talhao);
     const r = byId(DB.receitas,a.receita);
-    return [fmtDate(a.data), t?esc(t.nome):'—', r?esc(r.nome):'—', (a.area_ha||0)+' ha', a.delta_t||'—', fmtMoney(a.custo_total||0)];
+    return [fmtDate(a.data), t?t.nome:'—', r?r.nome:'—', (a.area_ha||0)+' ha', a.delta_t||'—', fmtMoney(a.custo_total||0)];
   });
   doc.autoTable({
     startY:y, margin:{left:14,right:14},
