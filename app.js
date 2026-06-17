@@ -22,9 +22,13 @@ let DB = {};
 function loadDB() {
   try { DB = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { DB = {}; }
   if (!DB.version) DB = defaultDB();
+  normalizeDB();
   saveDB();
 }
-function saveDB() { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }
+function saveDB() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }
+  catch { console.warn('PVGest: nao foi possivel salvar no armazenamento local.'); }
+}
 function defaultDB() {
   return {
     version:1,
@@ -37,6 +41,15 @@ function defaultDB() {
     talhoes:[], produtos:[], receitas:[], aplicacoes:[], movimentos:[], leituras:[]
   };
 }
+function normalizeDB() {
+  const base = defaultDB();
+  DB.version = DB.version || base.version;
+  DB.config = { ...base.config, ...(DB.config||{}) };
+  ['usuarios','talhoes','produtos','receitas','aplicacoes','movimentos','leituras'].forEach(k=>{
+    if (!Array.isArray(DB[k])) DB[k] = base[k] || [];
+  });
+  if (!DB.usuarios.length) DB.usuarios = base.usuarios;
+}
 
 // ──────────── UTILS ────────────
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
@@ -45,7 +58,39 @@ const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('pt-BR') : '
 const fmtNum  = n => (n||0).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:2});
 const fmtMoney = n => 'R$ ' + (n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const byId = (arr,id) => (arr||[]).find(x=>x.id===id);
-const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const escAttr = s => esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+const toNum = (v, fallback=0) => {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+const UNIT_META = {
+  L:{group:'volume', factor:1}, mL:{group:'volume', factor:0.001},
+  kg:{group:'mass', factor:1}, g:{group:'mass', factor:0.001}, t:{group:'mass', factor:1000},
+  un:{group:'unit', factor:1}
+};
+const doseUnitLabel = unit => unit || 'L/ha';
+const baseDoseUnit = unit => doseUnitLabel(unit).replace('/ha','');
+function convertUnit(qtd, fromUnit, toUnit) {
+  if (fromUnit === toUnit) return qtd;
+  const from = UNIT_META[fromUnit], to = UNIT_META[toUnit];
+  if (!from || !to || from.group !== to.group) return null;
+  return qtd * from.factor / to.factor;
+}
+function doseUsage(item, area, product) {
+  const displayUnit = baseDoseUnit(item.unidade);
+  const displayQtd = toNum(item.dose) * area;
+  const estoqueUnit = product?.unidade || displayUnit;
+  const converted = convertUnit(displayQtd, displayUnit, estoqueUnit);
+  const conversionMissing = product && converted === null;
+  const estoqueQtd = converted === null ? displayQtd : converted;
+  return {
+    displayQtd, displayUnit, estoqueQtd, estoqueUnit,
+    converted: converted !== null && displayUnit !== estoqueUnit,
+    conversionMissing,
+    custo: estoqueQtd * toNum(product?.preco)
+  };
+}
 
 function toast(msg, type='success') {
   const el = document.getElementById('toast');
@@ -419,12 +464,12 @@ function openTalhaoForm(id) {
       <button class="modal-close" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
       <div class="form-group"><label class="form-label">Nome do Talhão</label>
-        <input class="form-input" id="fTNome" placeholder="Ex: Talhão A / Gleba 01" value="${esc(t?.nome||'')}"></div>
+        <input class="form-input" id="fTNome" placeholder="Ex: Talhão A / Gleba 01" value="${escAttr(t?.nome||'')}"></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Área (ha)</label>
           <input class="form-input" id="fTArea" type="number" step=".1" min="0" placeholder="0.0" value="${t?.area||''}"></div>
         <div class="form-group"><label class="form-label">Safra</label>
-          <input class="form-input" id="fTSafra" placeholder="2024/25" value="${esc(t?.safra||'')}"></div>
+          <input class="form-input" id="fTSafra" placeholder="2024/25" value="${escAttr(t?.safra||'')}"></div>
       </div>
       <div class="form-group"><label class="form-label">Cultura</label>
         <select class="form-input" id="fTCultura">${CULTURAS.map(c=>`<option ${(t?.cultura||'')==c?'selected':''}>${c}</option>`).join('')}</select></div>
@@ -444,6 +489,7 @@ function saveTalhao(id) {
   if (!area || area<=0) { toast('Informe a área em hectares','error'); return; }
   if (id) {
     const t = byId(DB.talhoes,id);
+    if (!t) { toast('Talhão não encontrado para atualização','error'); return; }
     Object.assign(t, { nome, area, safra:document.getElementById('fTSafra').value, cultura:document.getElementById('fTCultura').value, obs:document.getElementById('fTObs').value });
   } else {
     DB.talhoes.push({ id:uid(), nome, area, safra:document.getElementById('fTSafra').value, cultura:document.getElementById('fTCultura').value, obs:document.getElementById('fTObs').value });
@@ -519,7 +565,7 @@ function openProdutoForm(id) {
       <button class="modal-close" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
       <div class="form-group"><label class="form-label">Nome do produto</label>
-        <input class="form-input" id="fPNome" placeholder="Ex: Glifosato 480" value="${esc(p?.nome||'')}"></div>
+        <input class="form-input" id="fPNome" placeholder="Ex: Glifosato 480" value="${escAttr(p?.nome||'')}"></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Classe</label>
           <select class="form-input" id="fPClasse">${CLASSES.map(c=>`<option ${(p?.classe||'')==c?'selected':''}>${c}</option>`).join('')}</select></div>
@@ -539,7 +585,7 @@ function openProdutoForm(id) {
           <input class="form-input" id="fPVal" type="date" value="${p?.validade||''}"></div>
       </div>
       <div class="form-group"><label class="form-label">Fabricante</label>
-        <input class="form-input" id="fPFab" placeholder="Nome do fabricante" value="${esc(p?.fabricante||'')}"></div>
+        <input class="form-input" id="fPFab" placeholder="Nome do fabricante" value="${escAttr(p?.fabricante||'')}"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary btn-block" onclick="saveProduto('${id||''}')">💾 Salvar</button>
@@ -550,16 +596,27 @@ function openProdutoForm(id) {
 function saveProduto(id) {
   const nome = document.getElementById('fPNome').value.trim();
   if (!nome) { toast('Informe o nome do produto','error'); return; }
+  const estoqueAtual = toNum(document.getElementById('fPEst').value);
+  const estoqueMin = toNum(document.getElementById('fPMin').value);
+  const preco = toNum(document.getElementById('fPPreco').value);
+  if (estoqueAtual < 0 || estoqueMin < 0 || preco < 0) {
+    toast('Estoque e preço não podem ser negativos','error');
+    return;
+  }
   const data = {
     nome, classe:document.getElementById('fPClasse').value,
     unidade:document.getElementById('fPUn').value,
-    estoque_atual:parseFloat(document.getElementById('fPEst').value)||0,
-    estoque_min:parseFloat(document.getElementById('fPMin').value)||0,
-    preco:parseFloat(document.getElementById('fPPreco').value)||0,
+    estoque_atual:estoqueAtual,
+    estoque_min:estoqueMin,
+    preco,
     validade:document.getElementById('fPVal').value,
     fabricante:document.getElementById('fPFab').value
   };
-  if (id) Object.assign(byId(DB.produtos,id), data);
+  if (id) {
+    const produto = byId(DB.produtos,id);
+    if (!produto) { toast('Produto não encontrado para atualização','error'); return; }
+    Object.assign(produto, data);
+  }
   else DB.produtos.push({id:uid(), ...data});
   saveDB(); closeModal(); toast(id?'Produto atualizado!':'Produto cadastrado!'); renderEstoque();
 }
@@ -614,10 +671,11 @@ function saveMovimento(produtoId) {
   const p = byId(DB.produtos, produtoId); if (!p) return;
   const tipo  = document.getElementById('fMTipo').value;
   const qtd   = parseFloat(document.getElementById('fMQtd').value)||0;
-  const preco = parseFloat(document.getElementById('fMPreco').value)||p.preco||0;
+  const preco = toNum(document.getElementById('fMPreco').value, toNum(p.preco));
   const data  = document.getElementById('fMData').value || today();
   const obs   = document.getElementById('fMObs').value;
   if (!qtd || qtd<=0) { toast('Informe a quantidade','error'); return; }
+  if (preco < 0) { toast('Preço não pode ser negativo','error'); return; }
   if (tipo==='saida' && qtd>p.estoque_atual) { toast('Quantidade maior que o estoque atual','error'); return; }
   p.estoque_atual += tipo==='entrada' ? qtd : -qtd;
   if (preco) p.preco = preco;
@@ -633,7 +691,7 @@ function renderReceitas() {
       const p = byId(DB.produtos,i.produto);
       return `<div class="prod-item">
         <span class="prod-item-name">${p?esc(p.nome):esc(i.nome_livre||'?')}</span>
-        <span class="prod-item-dose">${fmtNum(i.dose)} ${i.unidade}/ha</span>
+        <span class="prod-item-dose">${fmtNum(i.dose)} ${doseUnitLabel(i.unidade)}</span>
       </div>`;
     }).join('');
     return `<div class="list-card">
@@ -682,7 +740,7 @@ function openReceitaDetail(id) {
         return `<div class="prod-item">
           <div style="flex:1"><div style="font-size:.85rem;font-weight:600">${p?esc(p.nome):esc(i.nome_livre||'?')}</div>
             <div style="font-size:.72rem;color:var(--txt3)">${p?esc(p.classe||''):'—'}</div></div>
-          <div style="text-align:right"><div style="font-size:.85rem;font-weight:600">${fmtNum(i.dose)} ${i.unidade}/ha</div>
+          <div style="text-align:right"><div style="font-size:.85rem;font-weight:600">${fmtNum(i.dose)} ${doseUnitLabel(i.unidade)}</div>
             <div style="font-size:.72rem;color:var(--txt3)">${fmtMoney(custo_item)}/ha</div></div>
         </div>`;}).join('')}
       ${r.obs?`<div class="alert alert-info mt-2">📝 ${esc(r.obs)}</div>`:''}
@@ -709,7 +767,7 @@ function renderReceitaFormModal(id, r) {
     const p = byId(DB.produtos,it.produto);
     return `<div class="prod-item" style="align-items:center">
       <div style="flex:1"><div style="font-size:.85rem;font-weight:600">${p?esc(p.nome):esc(it.nome_livre||'?')}</div>
-        <div style="font-size:.72rem;color:var(--txt3)">${fmtNum(it.dose)} ${it.unidade}/ha</div></div>
+        <div style="font-size:.72rem;color:var(--txt3)">${fmtNum(it.dose)} ${doseUnitLabel(it.unidade)}</div></div>
       <button class="btn-icon" style="font-size:.85rem" onclick="removeReceitaItem(${idx})">✕</button>
     </div>`;
   }).join('');
@@ -717,9 +775,9 @@ function renderReceitaFormModal(id, r) {
   openModal(`
     <div class="modal-hdr"><span class="modal-title">${r?'Editar':'Nova'} Receita</span>
       <button class="modal-close" onclick="closeModal()">✕</button></div>
-    <div class="modal-body">
+    <div class="modal-body" data-id="${escAttr(id||'')}">
       <div class="form-group"><label class="form-label">Nome da receita</label>
-        <input class="form-input" id="fRNome" placeholder="Ex: Fungicida soja fase R1" value="${esc(r?.nome||'')}"></div>
+        <input class="form-input" id="fRNome" placeholder="Ex: Fungicida soja fase R1" value="${escAttr(r?.nome||'')}"></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Cultura</label>
           <select class="form-input" id="fRCultura">${CULTURAS.map(c=>`<option ${(r?.cultura||'')==c?'selected':''}>${c}</option>`).join('')}</select></div>
@@ -727,7 +785,7 @@ function renderReceitaFormModal(id, r) {
           <input class="form-input" id="fRVol" type="number" min="1" value="${r?.volume_ha||200}"></div>
       </div>
       <div class="form-group"><label class="form-label">Alvo (praga/doença)</label>
-        <input class="form-input" id="fRAlvo" placeholder="Ex: Ferrugem asiática" value="${esc(r?.alvo||'')}"></div>
+        <input class="form-input" id="fRAlvo" placeholder="Ex: Ferrugem asiática" value="${escAttr(r?.alvo||'')}"></div>
 
       <div class="sec-lbl mt-2">Produtos na calda</div>
       <div id="receitaItemsList">${itemsHtml||'<div class="empty-sub" style="font-size:.8rem;margin-bottom:.75rem">Nenhum produto adicionado</div>'}</div>
@@ -763,38 +821,38 @@ function addReceitaItem() {
   const p = byId(DB.produtos, prodId);
   if (!p) return;
   receitaItems.push({ produto:prodId, dose, unidade:un, nome_livre:p.nome });
-  // Preserve form values before re-render
-  const nome = document.getElementById('fRNome')?.value;
-  const vol  = document.getElementById('fRVol')?.value;
-  const alvo = document.getElementById('fRAlvo')?.value;
-  const obs  = document.getElementById('fRObs')?.value;
-  const cultura = document.getElementById('fRCultura')?.value;
+  const values = getReceitaFormValues();
   const id = document.querySelector('#modalSheet [data-id]')?.dataset.id||'';
   const r = id ? byId(DB.receitas,id) : null;
   renderReceitaFormModal(id||'', r);
-  if (nome) document.getElementById('fRNome').value=nome;
-  if (vol)  document.getElementById('fRVol').value=vol;
-  if (alvo) document.getElementById('fRAlvo').value=alvo;
-  if (obs)  document.getElementById('fRObs').value=obs;
-  if (cultura) document.getElementById('fRCultura').value=cultura;
+  applyReceitaFormValues(values);
 }
 
 function removeReceitaItem(idx) {
   receitaItems.splice(idx,1);
   const id = document.querySelector('#modalSheet [data-id]')?.dataset.id||'';
   const r = id ? byId(DB.receitas,id) : null;
-  // Re-render keeping values
-  const nome = document.getElementById('fRNome')?.value;
-  const vol  = document.getElementById('fRVol')?.value;
-  const alvo = document.getElementById('fRAlvo')?.value;
-  const obs  = document.getElementById('fRObs')?.value;
-  const cultura = document.getElementById('fRCultura')?.value;
+  const values = getReceitaFormValues();
   renderReceitaFormModal(id||'', r);
-  if (nome) document.getElementById('fRNome').value=nome;
-  if (vol)  document.getElementById('fRVol').value=vol;
-  if (alvo) document.getElementById('fRAlvo').value=alvo;
-  if (obs)  document.getElementById('fRObs').value=obs;
-  if (cultura) document.getElementById('fRCultura').value=cultura;
+  applyReceitaFormValues(values);
+}
+
+function getReceitaFormValues() {
+  return {
+    nome:document.getElementById('fRNome')?.value ?? '',
+    vol:document.getElementById('fRVol')?.value ?? '',
+    alvo:document.getElementById('fRAlvo')?.value ?? '',
+    obs:document.getElementById('fRObs')?.value ?? '',
+    cultura:document.getElementById('fRCultura')?.value ?? ''
+  };
+}
+function applyReceitaFormValues(values) {
+  if (!values) return;
+  const fields = { fRNome:'nome', fRVol:'vol', fRAlvo:'alvo', fRObs:'obs', fRCultura:'cultura' };
+  Object.entries(fields).forEach(([id,key])=>{
+    const el = document.getElementById(id);
+    if (el) el.value = values[key] ?? '';
+  });
 }
 
 function saveReceita(id) {
@@ -806,9 +864,13 @@ function saveReceita(id) {
     volume_ha:parseFloat(document.getElementById('fRVol').value)||200,
     alvo:document.getElementById('fRAlvo').value,
     obs:document.getElementById('fRObs').value,
-    itens:receitaItems
+    itens:receitaItems.map(i=>({ ...i, dose:toNum(i.dose), unidade:doseUnitLabel(i.unidade) }))
   };
-  if (id) Object.assign(byId(DB.receitas,id), data);
+  if (id) {
+    const receita = byId(DB.receitas,id);
+    if (!receita) { toast('Receita não encontrada para atualização','error'); return; }
+    Object.assign(receita, data);
+  }
   else DB.receitas.push({id:uid(), ...data, criado_por:currentUser.id});
   saveDB(); closeModal(); toast(id?'Receita atualizada!':'Receita salva!'); renderReceitas();
 }
@@ -855,11 +917,9 @@ function calcResult(receitaId) {
   const totalVol = (r.volume_ha||200)*area;
   const itens = (r.itens||[]).map(i=>{
     const p = byId(DB.produtos,i.produto);
-    const qtd = i.dose*area;
-    const custo = qtd*(p?.preco||0);
-    const un = i.unidade.replace('/ha','');
-    const estOk = !p || p.estoque_atual>=qtd;
-    return { p, qtd, custo, un, estOk, i };
+    const usage = doseUsage(i, area, p);
+    const estOk = !p || (!usage.conversionMissing && toNum(p.estoque_atual) >= usage.estoqueQtd);
+    return { p, ...usage, estOk, i };
   });
   const totalCusto = itens.reduce((s,i)=>s+i.custo,0);
   out.innerHTML = `
@@ -870,8 +930,10 @@ function calcResult(receitaId) {
         <div class="calc-result-item">
           <span>${it.p?esc(it.p.nome):esc(it.i.nome_livre||'?')}</span>
           <div style="text-align:right">
-            <strong>${fmtNum(it.qtd)} ${it.un}</strong>
+            <strong>${fmtNum(it.displayQtd)} ${it.displayUnit}</strong>
             <div style="font-size:.72rem;color:var(--txt3)">${fmtMoney(it.custo)}</div>
+            ${it.converted?`<div style="font-size:.65rem;color:var(--txt3)">Baixa: ${fmtNum(it.estoqueQtd)} ${it.estoqueUnit}</div>`:''}
+            ${it.conversionMissing?`<div style="font-size:.65rem;color:var(--r600)">⚠️ Unidade incompatível com o estoque</div>`:''}
             ${!it.estOk?`<div style="font-size:.65rem;color:var(--r600)">⚠️ Estoque insuficiente</div>`:''}
           </div>
         </div>`).join('')}
@@ -935,7 +997,7 @@ function openNovaAplicacao(talhaoId) {
           <input class="form-input" id="fAComb" type="number" step=".01" value="${DB.config.combustivel_ha||0}"></div>
       </div>`:''}
       <div class="form-group"><label class="form-label">Operador</label>
-        <input class="form-input" id="fAOper" value="${esc(currentUser.nome)}"></div>
+        <input class="form-input" id="fAOper" value="${escAttr(currentUser.nome)}"></div>
       <div class="form-group"><label class="form-label">Observações</label>
         <textarea class="form-input" id="fAObs" rows="2"></textarea></div>
     </div>
@@ -972,6 +1034,12 @@ function saveAplicacao() {
   const area = parseFloat(document.getElementById('fAArea')?.value)||0;
   if (!talhaoId) { toast('Selecione o talhão','error'); return; }
   if (!area||area<=0) { toast('Informe a área aplicada','error'); return; }
+  const talhao = byId(DB.talhoes,talhaoId);
+  if (!talhao) { toast('Talhão selecionado não encontrado','error'); return; }
+  if (toNum(talhao.area) > 0 && area > toNum(talhao.area)) {
+    toast(`Área aplicada maior que o talhão (${fmtNum(talhao.area)} ha)`,'error');
+    return;
+  }
 
   const data = document.getElementById('fAData')?.value||today();
   const receitaId = document.getElementById('fAReceita')?.value||'';
@@ -985,20 +1053,32 @@ function saveAplicacao() {
 
   // Calcula custo de produto da receita
   let custo_produto = 0;
+  const consumos = [];
   if (receitaId) {
     const r = byId(DB.receitas, receitaId);
-    custo_produto = (r?.itens||[]).reduce((s,i)=>{
+    if (!r) { toast('Receita selecionada não encontrada','error'); return; }
+    for (const i of (r.itens||[])) {
       const p = byId(DB.produtos,i.produto);
-      return s + i.dose*area*(p?.preco||0);
-    },0);
-    // Baixar estoque
-    (r?.itens||[]).forEach(i=>{
-      const p = byId(DB.produtos,i.produto);
-      if (p) {
-        const consumo = i.dose*area;
-        p.estoque_atual = Math.max(0, p.estoque_atual-consumo);
-        DB.movimentos.push({ id:uid(), produto:i.produto, tipo:'saida', qtd:consumo, preco:p.preco, data, aplicacao:aplicId, obs:`Aplicação em ${byId(DB.talhoes,talhaoId)?.nome}`, usuario:currentUser.id });
+      if (!p) { toast(`Produto da receita não encontrado: ${i.nome_livre||'item removido'}`,'error'); return; }
+      const uso = doseUsage(i, area, p);
+      if (uso.conversionMissing) {
+        toast(`Unidade incompatível em ${p.nome}: receita em ${uso.displayUnit}, estoque em ${p.unidade}`,'error');
+        return;
       }
+      if (toNum(p.estoque_atual) < uso.estoqueQtd) {
+        toast(`Estoque insuficiente de ${p.nome}: precisa ${fmtNum(uso.estoqueQtd)} ${uso.estoqueUnit}, disponível ${fmtNum(p.estoque_atual)} ${p.unidade}`,'error');
+        return;
+      }
+      custo_produto += uso.custo;
+      consumos.push({ item:i, produto:p, uso });
+    }
+    consumos.forEach(({item, produto, uso})=>{
+      produto.estoque_atual = Math.max(0, toNum(produto.estoque_atual)-uso.estoqueQtd);
+      DB.movimentos.push({
+        id:uid(), produto:item.produto, tipo:'saida', qtd:uso.estoqueQtd, preco:toNum(produto.preco),
+        data, aplicacao:aplicId, obs:`Aplicação em ${byId(DB.talhoes,talhaoId)?.nome}`,
+        usuario:currentUser.id, dose_qtd:uso.displayQtd, dose_unidade:uso.displayUnit
+      });
     });
   }
 
@@ -1150,7 +1230,7 @@ function renderConfig() {
     <div class="sec-lbl">Propriedade</div>
     <div class="card card-body mb-2">
       <div class="form-group"><label class="form-label">Nome da propriedade</label>
-        <input class="form-input" id="cfgProp" value="${esc(DB.config.propriedade)}"></div>
+        <input class="form-input" id="cfgProp" value="${escAttr(DB.config.propriedade)}"></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Mão de obra (R$/ha)</label>
           <input class="form-input" id="cfgMO" type="number" value="${DB.config.mao_obra_ha||0}"></div>
@@ -1174,12 +1254,20 @@ function renderConfig() {
 }
 
 function saveConfig() {
+  const mo = toNum(document.getElementById('cfgMO').value);
+  const combustivel = toNum(document.getElementById('cfgComb').value);
+  const depreciacao = toNum(document.getElementById('cfgDep').value);
+  const retrabalho = parseInt(document.getElementById('cfgRet').value)||21;
+  if (mo < 0 || combustivel < 0 || depreciacao < 0 || retrabalho < 1) {
+    toast('Custos devem ser positivos e retrabalho deve ter ao menos 1 dia','error');
+    return;
+  }
   Object.assign(DB.config, {
     propriedade:document.getElementById('cfgProp').value.trim()||DB.config.propriedade,
-    mao_obra_ha:parseFloat(document.getElementById('cfgMO').value)||0,
-    combustivel_ha:parseFloat(document.getElementById('cfgComb').value)||0,
-    depreciacao_ha:parseFloat(document.getElementById('cfgDep').value)||0,
-    retrabalho_dias:parseInt(document.getElementById('cfgRet').value)||21
+    mao_obra_ha:mo,
+    combustivel_ha:combustivel,
+    depreciacao_ha:depreciacao,
+    retrabalho_dias:retrabalho
   });
   saveDB(); toast('Configurações salvas!');
   document.getElementById('hdrProp').textContent = DB.config.propriedade;
@@ -1192,13 +1280,13 @@ function openUserForm(id) {
       <button class="modal-close" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
       <div class="form-group"><label class="form-label">Nome</label>
-        <input class="form-input" id="fUNome" value="${esc(u?.nome||'')}"></div>
+        <input class="form-input" id="fUNome" value="${escAttr(u?.nome||'')}"></div>
       <div class="form-group"><label class="form-label">Perfil</label>
         <select class="form-input" id="fUPerfil">
           ${Object.entries(PERFIS).map(([k,v])=>`<option value="${k}" ${(u?.perfil||'')==k?'selected':''}>${v.icon} ${v.label}</option>`).join('')}
         </select></div>
       <div class="form-group"><label class="form-label">PIN (4 dígitos)</label>
-        <input class="form-input" id="fUPin" type="password" maxlength="4" pattern="[0-9]{4}" placeholder="••••" value="${u?.pin||''}"></div>
+        <input class="form-input" id="fUPin" type="password" maxlength="4" pattern="[0-9]{4}" placeholder="••••" value="${escAttr(u?.pin||'')}"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary btn-block" onclick="saveUser('${id||''}')">💾 Salvar</button>
@@ -1211,7 +1299,7 @@ function saveUser(id) {
   const perfil = document.getElementById('fUPerfil').value;
   const pin = document.getElementById('fUPin').value.trim();
   if (!nome) { toast('Informe o nome','error'); return; }
-  if (!pin || pin.length<4 || !/^\d+$/.test(pin)) { toast('PIN deve ter 4 dígitos','error'); return; }
+  if (!/^\d{4}$/.test(pin)) { toast('PIN deve ter 4 dígitos','error'); return; }
   if (id) {
     Object.assign(byId(DB.usuarios,id), { nome, perfil, pin });
   } else {
@@ -1237,8 +1325,17 @@ function manageFab(cls, onClick) {
 
 // ──────────── EXPORT PDF ────────────
 function exportPDF() {
+  if (!window.jspdf?.jsPDF) {
+    toast('Biblioteca de PDF não carregada. Verifique a conexão e tente novamente.','error');
+    return;
+  }
+  try {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+  if (typeof doc.autoTable !== 'function') {
+    toast('Biblioteca de tabelas PDF não carregada. Tente novamente online.','error');
+    return;
+  }
   const prop = DB.config.propriedade;
   const dateStr = new Date().toLocaleDateString('pt-BR');
   let y = 20;
@@ -1322,10 +1419,19 @@ function exportPDF() {
 
   doc.save(`PVGest_Relatorio_${dateStr.replace(/\//g,'-')}.pdf`);
   toast('PDF gerado com sucesso!');
+  } catch (err) {
+    console.error(err);
+    toast('Não foi possível gerar o PDF','error');
+  }
 }
 
 // ──────────── EXPORT EXCEL ────────────
 function exportExcel() {
+  if (!window.XLSX?.utils?.book_new || !window.XLSX.writeFile) {
+    toast('Biblioteca de Excel não carregada. Verifique a conexão e tente novamente.','error');
+    return;
+  }
+  try {
   const wb = XLSX.utils.book_new();
 
   // Aba: Aplicações
@@ -1376,6 +1482,10 @@ function exportExcel() {
   const dateStr = new Date().toLocaleDateString('pt-BR').replace(/\//g,'-');
   XLSX.writeFile(wb, `PVGest_${dateStr}.xlsx`);
   toast('Excel gerado com sucesso!');
+  } catch (err) {
+    console.error(err);
+    toast('Não foi possível gerar o Excel','error');
+  }
 }
 
 // ──────────── PWA ────────────

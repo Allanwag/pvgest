@@ -1,7 +1,11 @@
-const CACHE = 'pvgest-v2';
+const CACHE = 'pvgest-v3';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE)
+      .then(c => Promise.all(ASSETS.map(asset => c.add(asset).catch(() => null))))
+      .then(() => self.skipWaiting())
+  );
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys =>
@@ -18,7 +22,7 @@ self.addEventListener('fetch', e => {
         const clone = res.clone();
         caches.open(CACHE).then(c => c.put(e.request, clone));
         return res;
-      }).catch(() => caches.match('./index.html'));
+      }).catch(() => e.request.mode === 'navigate' ? caches.match('./index.html') : cached);
     })
   );
 });
