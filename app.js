@@ -10,10 +10,20 @@ const UNIDADES = ['L','kg','mL','g','t','un'];
 const CULTURAS = ['Soja','Milho','Café','Cana-de-açúcar','Algodão','Feijão','Trigo','Pastagem','Outro'];
 const EQUIPS = ['Pulverizador Barras','Pulverizador Canhão','Costal Manual','Costal Motorizado','Drone','Avião Agrícola'];
 
+// Ordens de Serviço
+const OS_TIPOS = ['Pulverização','Plantio','Colheita','Adubação','Preparo de solo','Roçada/Capina','Irrigação','Outro'];
+const OS_STATUS = {
+  aberta:       { label:'Aberta',       badge:'badge-low',     icon:'📋' },
+  em_andamento: { label:'Em andamento', badge:'badge-caution', icon:'🔧' },
+  concluida:    { label:'Concluída',    badge:'badge-ideal',   icon:'✅' },
+  cancelada:    { label:'Cancelada',    badge:'badge-danger',  icon:'🚫' }
+};
+const OS_MOTIVOS = ['Clima','Máquina / Equipamento','Quebra / Manutenção','Falta de insumo','Mão de obra','Logística / Transporte','Condição do talhão','Outro'];
+
 const PERFIS = {
-  gestor:    { label:'Gestor',     icon:'👔', color:'#1B5E20', tabs:['dt','talhoes','receitas','estoque','relatorios'] },
-  agronomo:  { label:'Agrônomo',   icon:'🌿', color:'#2E7D32', tabs:['dt','talhoes','receitas','estoque','relatorios'] },
-  tratorista:{ label:'Tratorista', icon:'🚜', color:'#F57C00', tabs:['dt','execucao'] }
+  gestor:    { label:'Gestor',     icon:'👔', color:'#1B5E20', tabs:['dt','talhoes','ordens','receitas','estoque','relatorios'] },
+  agronomo:  { label:'Agrônomo',   icon:'🌿', color:'#2E7D32', tabs:['dt','talhoes','ordens','receitas','estoque','relatorios'] },
+  tratorista:{ label:'Tratorista', icon:'🚜', color:'#F57C00', tabs:['dt','ordens','execucao'] }
 };
 
 // ──────────── DATABASE ────────────
@@ -38,14 +48,14 @@ function defaultDB() {
       { id:'u2', nome:'Agrônomo',   perfil:'agronomo',   pin:'2345', ativo:true },
       { id:'u3', nome:'Tratorista', perfil:'tratorista', pin:'3456', ativo:true }
     ],
-    talhoes:[], produtos:[], receitas:[], aplicacoes:[], movimentos:[], leituras:[]
+    talhoes:[], produtos:[], receitas:[], aplicacoes:[], movimentos:[], leituras:[], ordens:[], apontamentos:[]
   };
 }
 function normalizeDB() {
   const base = defaultDB();
   DB.version = DB.version || base.version;
   DB.config = { ...base.config, ...(DB.config||{}) };
-  ['usuarios','talhoes','produtos','receitas','aplicacoes','movimentos','leituras'].forEach(k=>{
+  ['usuarios','talhoes','produtos','receitas','aplicacoes','movimentos','leituras','ordens','apontamentos'].forEach(k=>{
     if (!Array.isArray(DB[k])) DB[k] = base[k] || [];
   });
   if (!DB.usuarios.length) DB.usuarios = base.usuarios;
@@ -53,7 +63,10 @@ function normalizeDB() {
 
 // ──────────── UTILS ────────────
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-const today = () => new Date().toISOString().slice(0,10);
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+};
 const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtNum  = n => (n||0).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:2});
 const fmtMoney = n => 'R$ ' + (n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -92,10 +105,20 @@ function doseUsage(item, area, product) {
   };
 }
 
+// Converte a unidade da dose (ex.: mL/ha) para a unidade do produto em estoque (ex.: L)
+function doseFactor(doseUn, prodUn) {
+  const u = (doseUn||'').replace('/ha','');
+  if (!prodUn || u === prodUn) return 1;
+  const conv = { mL:{L:.001}, L:{mL:1000}, g:{kg:.001,t:.000001}, kg:{g:1000,t:.001} };
+  return conv[u]?.[prodUn] ?? 1;
+}
+
+let _toastTimer = null;
 function toast(msg, type='success') {
   const el = document.getElementById('toast');
+  if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
   el.textContent = msg; el.className = `toast ${type}`;
-  setTimeout(()=>el.classList.add('hidden'), 2800);
+  _toastTimer = setTimeout(()=>{ el.classList.add('hidden'); _toastTimer = null; }, 2800);
 }
 
 // ──────────── AUTH ────────────
@@ -170,7 +193,9 @@ function can(action) {
     viewRelatorios:['gestor','agronomo'],
     deleteTalhao:['gestor'], deleteProduto:['gestor'],
     addAplicacao:['gestor','agronomo','tratorista'],
-    execucao:['tratorista','gestor','agronomo']
+    execucao:['tratorista','gestor','agronomo'],
+    manageOrdens:['gestor','agronomo'],
+    apontarOrdem:['tratorista','gestor','agronomo']
   };
   return (rules[action]||[]).includes(p);
 }
@@ -187,13 +212,14 @@ function renderApp() {
   renderNav();
   const tabs = p.tabs||['dt'];
   navTo(tabs[0]);
+  notifyOverdue();
 }
 
 function renderNav() {
   const p = PERFIS[currentUser.perfil]||{};
   const tabs = p.tabs||['dt'];
-  const labels = { dt:'ΔT', talhoes:'Talhões', receitas:'Receitas', estoque:'Estoque', relatorios:'Relatórios', execucao:'Execução', config:'Config' };
-  const icons  = { dt:'🌡️', talhoes:'🗺️', receitas:'🧪', estoque:'📦', relatorios:'📊', execucao:'🚜', config:'⚙️' };
+  const labels = { dt:'ΔT', talhoes:'Talhões', ordens:'Ordens', receitas:'Receitas', estoque:'Estoque', relatorios:'Relatórios', execucao:'Execução', config:'Config' };
+  const icons  = { dt:'🌡️', talhoes:'🗺️', ordens:'📋', receitas:'🧪', estoque:'📦', relatorios:'📊', execucao:'🚜', config:'⚙️' };
   document.getElementById('botNav').innerHTML = tabs.map(t =>
     `<button class="nav-btn" data-tab="${t}" onclick="navTo('${t}')">
       <span class="nav-icon">${icons[t]||'📋'}</span>${labels[t]||t}
@@ -219,6 +245,7 @@ function renderTabContent(tab) {
     case 'receitas':   renderReceitas();   break;
     case 'estoque':    renderEstoque();    break;
     case 'relatorios': renderRelatorios(); break;
+    case 'ordens':     renderOrdens();     break;
     case 'execucao':   renderExecucao();   break;
     case 'config':     renderConfig();     break;
   }
@@ -398,7 +425,6 @@ function renderTalhoes() {
   const el = document.getElementById('tab-talhoes');
   const list = DB.talhoes.length ? DB.talhoes.map(t => {
     const aps = DB.aplicacoes.filter(a=>a.talhao===t.id);
-    const last = aps.sort((a,b)=>(b.data||'').localeCompare(a.data||''))[0];
     return `<div class="list-card">
       <div class="list-item" onclick="openTalhaoDetail('${t.id}')">
         <div class="li-icon" style="background:var(--g50);color:var(--g800)">🗺️</div>
@@ -507,17 +533,20 @@ function deleteTalhao(id) {
 function renderEstoque() {
   const el = document.getElementById('tab-estoque');
   const alertas = DB.produtos.filter(p => {
-    const pct = p.estoque_min>0 ? p.estoque_atual/p.estoque_min : 1;
-    return pct <= 1 || isExpiring(p);
+    return (p.estoque_min > 0 && p.estoque_atual <= p.estoque_min) || expiryStatus(p);
   });
 
-  const alertHtml = alertas.length ? alertas.map(p=>{
-    if (p.estoque_atual <= (p.estoque_min||0))
-      return `<div class="alert alert-danger">⚠️ <b>${esc(p.nome)}</b> — Estoque baixo: ${fmtNum(p.estoque_atual)} ${p.unidade}</div>`;
-    if (isExpiring(p))
-      return `<div class="alert alert-warn">🗓️ <b>${esc(p.nome)}</b> — Vencimento: ${fmtDate(p.validade)}</div>`;
-    return '';
-  }).join('') : '';
+  const alertHtml = alertas.map(p=>{
+    let h = '';
+    if (p.estoque_min > 0 && p.estoque_atual <= p.estoque_min)
+      h += `<div class="alert alert-danger">⚠️ <b>${esc(p.nome)}</b> — Estoque baixo: ${fmtNum(p.estoque_atual)} ${p.unidade}</div>`;
+    const ex = expiryStatus(p);
+    if (ex === 'vencido')
+      h += `<div class="alert alert-danger">⛔ <b>${esc(p.nome)}</b> — VENCIDO em ${fmtDate(p.validade)}</div>`;
+    else if (ex === 'vencendo')
+      h += `<div class="alert alert-warn">🗓️ <b>${esc(p.nome)}</b> — Vence em ${fmtDate(p.validade)}</div>`;
+    return h;
+  }).join('');
 
   const list = DB.produtos.length ? DB.produtos.map(p => {
     const pct = p.estoque_min>0 ? Math.min(p.estoque_atual/(p.estoque_min*2),1) : (p.estoque_atual>0?1:0);
@@ -552,10 +581,13 @@ function renderEstoque() {
   manageFab('fab-estoque', ()=>openProdutoForm());
 }
 
-function isExpiring(p) {
-  if (!p.validade) return false;
-  const diff = (new Date(p.validade)-new Date())/(1000*60*60*24);
-  return diff >= 0 && diff <= 30;
+// 'vencido' | 'vencendo' (até 30 dias) | null — parse local para evitar off-by-one de fuso
+function expiryStatus(p) {
+  if (!p.validade) return null;
+  const diff = (new Date(p.validade+'T23:59:59') - new Date())/(1000*60*60*24);
+  if (diff < 0) return 'vencido';
+  if (diff <= 30) return 'vencendo';
+  return null;
 }
 
 function openProdutoForm(id) {
@@ -723,7 +755,7 @@ function openReceitaDetail(id) {
   const r = byId(DB.receitas,id); if (!r) return;
   const custo_ha = (r.itens||[]).reduce((s,i)=>{
     const p = byId(DB.produtos,i.produto);
-    return s + i.dose*(p?.preco||0);
+    return s + i.dose*doseFactor(i.unidade,p?.unidade)*(p?.preco||0);
   },0);
   openModal(`
     <div class="modal-hdr"><span class="modal-title">🧪 ${esc(r.nome)}</span>
@@ -736,7 +768,7 @@ function openReceitaDetail(id) {
       <div class="sec-lbl mt-2">Produtos na calda</div>
       ${(r.itens||[]).map(i=>{
         const p = byId(DB.produtos,i.produto);
-        const custo_item = i.dose*(p?.preco||0);
+        const custo_item = i.dose*doseFactor(i.unidade,p?.unidade)*(p?.preco||0);
         return `<div class="prod-item">
           <div style="flex:1"><div style="font-size:.85rem;font-weight:600">${p?esc(p.nome):esc(i.nome_livre||'?')}</div>
             <div style="font-size:.72rem;color:var(--txt3)">${p?esc(p.classe||''):'—'}</div></div>
@@ -830,7 +862,7 @@ function addReceitaItem() {
 
 function removeReceitaItem(idx) {
   receitaItems.splice(idx,1);
-  const id = document.querySelector('#modalSheet [data-id]')?.dataset.id||'';
+  const id = document.querySelector('#modalSheet .modal-body[data-id]')?.dataset.id||'';
   const r = id ? byId(DB.receitas,id) : null;
   const values = getReceitaFormValues();
   renderReceitaFormModal(id||'', r);
@@ -955,15 +987,14 @@ function openNovaAplicacao(talhaoId) {
   const rOpts = DB.receitas.map(r=>`<option value="${r.id}">${esc(r.nome)}</option>`).join('');
   const wb = calcWetBulb(dtT,dtRh);
   const dt = (dtT-wb).toFixed(1);
-  const retrabalho = checkRetrabalho(talhaoId);
 
   openModal(`
     <div class="modal-hdr"><span class="modal-title">💧 Nova Aplicação</span>
       <button class="modal-close" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
-      ${retrabalho?`<div class="alert alert-warn">⚠️ <b>Possível retrabalho:</b> ${esc(retrabalho.receita)} aplicado há ${retrabalho.dias} dias neste talhão.</div>`:''}
+      <div id="retrabalhoAlert">${retrabalhoHtml(talhaoId)}</div>
       <div class="form-group"><label class="form-label">Talhão</label>
-        <select class="form-input" id="fATalhao" onchange="autoFillArea()">${tOpts}</select></div>
+        <select class="form-input" id="fATalhao" onchange="autoFillArea();refreshRetrabalho()">${tOpts}</select></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Data</label>
           <input class="form-input" id="fAData" type="date" value="${today()}"></div>
@@ -1013,6 +1044,17 @@ function autoFillArea() {
   if (!sel) return;
   const t = byId(DB.talhoes, sel.value);
   if (t) { const a = document.getElementById('fAArea'); if (a&&!a.value) a.value=t.area; }
+}
+
+function retrabalhoHtml(talhaoId) {
+  const rt = checkRetrabalho(talhaoId);
+  return rt ? `<div class="alert alert-warn">⚠️ <b>Possível retrabalho:</b> ${esc(rt.receita)} aplicado há ${rt.dias} dias neste talhão.</div>` : '';
+}
+
+function refreshRetrabalho() {
+  const sel = document.getElementById('fATalhao');
+  const el = document.getElementById('retrabalhoAlert');
+  if (sel && el) el.innerHTML = retrabalhoHtml(sel.value);
 }
 
 function checkRetrabalho(talhaoId) {
@@ -1099,8 +1141,9 @@ function saveAplicacao() {
 
   DB.aplicacoes.unshift(aplic);
   saveDB(); closeModal();
-  toast(`Aplicação registrada! Custo: ${fmtMoney(custo_total)}`);
-  if (curTab==='talhoes') renderTalhoes();
+  if (semEstoque.length) toast(`Aplicação registrada — estoque insuficiente: ${semEstoque.join(', ')}`,'error');
+  else toast(`Aplicação registrada! Custo: ${fmtMoney(custo_total)}`);
+  renderTabContent(curTab);
 }
 
 // ──────────── EXECUÇÃO (Tratorista) ────────────
@@ -1114,30 +1157,31 @@ function renderExecucao() {
   el.innerHTML = `
     <div class="page-hdr"><div><div class="page-title">Execução</div>
       <div class="page-sub">Condições e registro</div></div>
-      <span class="badge ${s.cls}">${s.label}</span></div>
+      <span class="badge ${s.cls}" id="exBadge">${s.label}</span></div>
 
-    <div class="card card-body mb-2" style="--hero:${s.hero};border-top:4px solid ${s.hero}">
+    <div class="card card-body mb-2" id="exCard" style="--hero:${s.hero};border-top:4px solid ${s.hero}">
       <div class="flex-between mb-1">
         <span class="card-title" style="margin:0">Delta T atual</span>
-        <span style="font-size:2rem;font-weight:800;letter-spacing:-.04em">${dt.toFixed(1)}</span>
+        <span style="font-size:2rem;font-weight:800;letter-spacing:-.04em" id="exDtBig">${dt.toFixed(1)}</span>
       </div>
-      <div class="dt-advice">${s.adv}</div>
+      <div class="dt-advice" id="exAdv">${s.adv}</div>
     </div>
 
     <div class="card card-body mb-2">
       <div class="card-title">Ajustar condições</div>
       <div class="slider-top"><span class="slider-name">Temperatura</span>
         <span class="slider-val" id="exVT">${dtT.toFixed(1)}<span class="slider-unit">°C</span></span></div>
-      <input type="range" min="5" max="45" step=".5" value="${dtT}" oninput="dtT=+this.value;renderExecucao()">
+      <input type="range" min="5" max="45" step=".5" value="${dtT}" oninput="dtT=+this.value;updateExecucao()">
       <div class="slider-top mt-1"><span class="slider-name">Umidade</span>
         <span class="slider-val" id="exVRh">${dtRh}<span class="slider-unit">%UR</span></span></div>
-      <input type="range" min="10" max="100" step="1" value="${dtRh}" oninput="dtRh=+this.value;renderExecucao()">
+      <input type="range" min="10" max="100" step="1" value="${dtRh}" oninput="dtRh=+this.value;updateExecucao()">
       <div class="slider-top mt-1"><span class="slider-name">Vento</span>
         <span class="slider-val" id="exVW">${dtWind.toFixed(1)}<span class="slider-unit">km/h</span></span></div>
-      <input type="range" min="0" max="30" step=".5" value="${dtWind}" oninput="dtWind=+this.value;renderExecucao()">
+      <input type="range" min="0" max="30" step=".5" value="${dtWind}" oninput="dtWind=+this.value;updateExecucao()">
     </div>
 
     <button class="btn btn-primary btn-block" onclick="openNovaAplicacao('')">💧 Registrar Aplicação</button>
+    <button class="btn btn-outline btn-block" onclick="navTo('ordens')">📋 Ordens de Serviço${(()=>{const n=DB.ordens.filter(o=>o.status==='aberta'||o.status==='em_andamento').length;return n?` (${n} em aberto)`:'';})()}</button>
 
     ${DB.aplicacoes.filter(a=>a.usuario===currentUser.id).slice(0,5).length?`
     <div class="sec-lbl mt-2">Minhas últimas aplicações</div>
@@ -1149,6 +1193,432 @@ function renderExecucao() {
           <div class="li-sub">${fmtDate(a.data)} · ${a.area_ha} ha · ΔT ${a.delta_t}</div></div>
       </div>`;}).join('')}</div>` : ''}
   `;
+}
+
+// Atualiza os valores da aba Execução sem recriar os sliders (não interrompe o arrasto)
+function updateExecucao() {
+  const badge = document.getElementById('exBadge');
+  if (!badge) return;
+  const wb = calcWetBulb(dtT,dtRh);
+  const dt = dtT-wb;
+  const s = dtStatus(dt);
+  badge.className = `badge ${s.cls}`; badge.textContent = s.label;
+  const card = document.getElementById('exCard');
+  card.style.setProperty('--hero', s.hero);
+  card.style.borderTopColor = s.hero;
+  document.getElementById('exDtBig').textContent = dt.toFixed(1);
+  document.getElementById('exAdv').innerHTML = s.adv;
+  document.getElementById('exVT').innerHTML = dtT.toFixed(1)+'<span class="slider-unit">°C</span>';
+  document.getElementById('exVRh').innerHTML = dtRh+'<span class="slider-unit">%UR</span>';
+  document.getElementById('exVW').innerHTML = dtWind.toFixed(1)+'<span class="slider-unit">km/h</span>';
+}
+
+// ──────────── ORDENS DE SERVIÇO ────────────
+const nextOsNumero = () => DB.ordens.reduce((m,o)=>Math.max(m,o.numero||0),0)+1;
+const osCodigo = n => 'OS-'+String(n).padStart(4,'0');
+
+// Ritmo planejado (ha/dia): usa o informado ou deriva da janela início→prazo
+function osRitmoPlan(o) {
+  if (o.ritmo_dia > 0) return o.ritmo_dia;
+  if (o.area_total > 0 && o.data_inicio && o.data_prazo) {
+    const dias = Math.max(1, Math.round((new Date(o.data_prazo+'T00:00:00') - new Date(o.data_inicio+'T00:00:00'))/(1000*60*60*24)) + 1);
+    return o.area_total / dias;
+  }
+  return 0;
+}
+
+// Calcula andamento da OS: área concluída, %, dias trabalhados, prazo e esperado vs. realizado
+function osProgress(o) {
+  const aps = DB.apontamentos.filter(a=>a.ordem===o.id);
+  const areaFeita = aps.reduce((s,a)=>s+(a.area_feita||0),0);
+  const total = o.area_total||0;
+  const pct = total>0 ? Math.min(areaFeita/total,1)*100 : (o.status==='concluida'?100:0);
+  const dias = new Set(aps.map(a=>a.data)).size;
+  const ativa = o.status==='aberta' || o.status==='em_andamento';
+  let diasRestantes = null, atrasada = false;
+  if (o.data_prazo) {
+    diasRestantes = Math.ceil((new Date(o.data_prazo+'T23:59:59') - new Date())/(1000*60*60*24));
+    atrasada = ativa && diasRestantes < 0;
+  }
+  // Esperado vs. realizado pelo ritmo planejado (só faz sentido enquanto a OS está em execução)
+  const ritmo = osRitmoPlan(o);
+  let esperado = null, desvioRitmo = null, noRitmo = null;
+  if (ritmo > 0 && o.data_inicio && ativa) {
+    const ini = new Date(o.data_inicio+'T00:00:00');
+    const hoje = new Date(today()+'T00:00:00');
+    const diasDecorridos = Math.floor((hoje - ini)/(1000*60*60*24)) + 1;
+    if (diasDecorridos >= 1) {
+      esperado = Math.min(ritmo*diasDecorridos, total);
+      desvioRitmo = areaFeita - esperado;       // negativo = atrás do ritmo
+      noRitmo = desvioRitmo >= -0.05;
+    }
+  }
+  return { aps, areaFeita, total, pct, dias, diasRestantes, atrasada, ativa, ritmo, esperado, desvioRitmo, noRitmo };
+}
+
+// OS ativas com prazo já vencido / vencendo hoje
+const overdueOrdens  = () => DB.ordens.filter(o=>(o.status==='aberta'||o.status==='em_andamento') && osProgress(o).atrasada);
+const dueTodayOrdens = () => DB.ordens.filter(o=>(o.status==='aberta'||o.status==='em_andamento') && o.data_prazo===today());
+
+// Dispara notificação no aparelho para OS vencidas (uma vez por OS por dia)
+function notifyOverdue() {
+  if (!('Notification' in window) || Notification.permission!=='granted') return;
+  const t = today();
+  DB.config.os_notif = DB.config.os_notif || {};
+  let changed = false;
+  overdueOrdens().forEach(o=>{
+    if (DB.config.os_notif[o.id] !== t) {
+      const tal = byId(DB.talhoes, o.talhao);
+      try {
+        new Notification(`⏰ OS atrasada — ${o.codigo}`, {
+          body: `${o.tipo||'Serviço'}${tal?' · '+tal.nome:''} — prazo ${fmtDate(o.data_prazo)} venceu. ${Math.round(osProgress(o).pct)}% concluído.`,
+          tag: 'pvgest-os-'+o.id
+        });
+      } catch(e){}
+      DB.config.os_notif[o.id] = t;
+      changed = true;
+    }
+  });
+  if (changed) saveDB();
+}
+
+function requestOsNotif() {
+  if (!('Notification' in window)) { toast('Navegador sem suporte a notificações','error'); return; }
+  Notification.requestPermission().then(p=>{
+    if (p==='granted') { toast('Avisos de prazo ativados'); notifyOverdue(); renderOrdens(); }
+    else toast('Permissão de notificação negada','error');
+  });
+}
+
+function renderOrdens() {
+  const el = document.getElementById('tab-ordens');
+  const rank = s => ({aberta:0, em_andamento:0, concluida:1, cancelada:2}[s] ?? 0);
+  const ordens = [...DB.ordens].sort((a,b)=>
+    rank(a.status)!==rank(b.status) ? rank(a.status)-rank(b.status)
+    : (a.data_prazo||'9999-12-31').localeCompare(b.data_prazo||'9999-12-31'));
+  const cnt = {aberta:0, em_andamento:0, concluida:0, cancelada:0};
+  DB.ordens.forEach(o=>{ cnt[o.status] = (cnt[o.status]||0)+1; });
+  const ativas = cnt.aberta + cnt.em_andamento;
+
+  const list = ordens.length ? ordens.map(osCardHtml).join('') : `<div class="empty-state"><div class="empty-icon">📋</div>
+    <div class="empty-title">Nenhuma ordem de serviço</div>
+    <div class="empty-sub">${can('manageOrdens')?'Toque no + para abrir uma OS':'Aguardando ordens do gestor/agrônomo'}</div></div>`;
+
+  // Avisos de prazo
+  const overdue = overdueOrdens();
+  const dueToday = dueTodayOrdens();
+  let banner = '';
+  if (overdue.length) banner += `<div class="alert alert-danger">⏰ <b>${overdue.length} OS com prazo vencido:</b> ${overdue.map(o=>esc(o.codigo)).join(', ')}.</div>`;
+  if (dueToday.length) banner += `<div class="alert alert-warn">🗓️ <b>${dueToday.length} OS vence(m) hoje:</b> ${dueToday.map(o=>esc(o.codigo)).join(', ')}.</div>`;
+  const podeNotif = 'Notification' in window && Notification.permission==='default' && (overdue.length||dueToday.length);
+  if (podeNotif) banner += `<button class="btn btn-outline btn-block" onclick="requestOsNotif()">🔔 Ativar avisos de prazo no aparelho</button>`;
+
+  el.innerHTML = `<div class="page-hdr"><div><div class="page-title">Ordens de Serviço</div>
+    <div class="page-sub">${ativas} em aberto · ${cnt.concluida} concluída(s)</div></div></div>
+    ${banner}
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-lbl">Em aberto</div><div class="stat-val">${ativas}</div><div class="stat-sub">a executar</div></div>
+      <div class="stat-card"><div class="stat-lbl">Concluídas</div><div class="stat-val">${cnt.concluida}</div><div class="stat-sub">finalizadas</div></div>
+    </div>
+    ${list}`;
+  el.insertAdjacentHTML('beforeend','<div style="height:80px"></div>');
+  if (can('manageOrdens')) manageFab('fab-ordem', ()=>openOrdemForm());
+  else document.querySelectorAll('.fab').forEach(f=>f.remove());
+  notifyOverdue();
+}
+
+function osCardHtml(o) {
+  const pr = osProgress(o);
+  const st = OS_STATUS[o.status] || OS_STATUS.aberta;
+  const t = byId(DB.talhoes, o.talhao);
+  const barColor = o.status==='concluida' ? 'var(--g600)' : pr.atrasada ? 'var(--r600)' : 'var(--a600)';
+  return `<div class="list-card">
+    <div class="list-item" onclick="openOrdemDetail('${o.id}')">
+      <div class="li-icon" style="background:var(--g50)">${st.icon}</div>
+      <div class="li-body">
+        <div class="li-title">${esc(o.codigo)} — ${esc(o.tipo||'Serviço')}</div>
+        <div class="li-sub">${t?esc(t.nome):'Sem talhão'} · ${fmtNum(pr.areaFeita)}/${fmtNum(pr.total)} ha${o.data_prazo?` · prazo ${fmtDate(o.data_prazo)}`:''}</div>
+        <div class="stock-bar"><div class="stock-bar-fill" style="width:${pr.pct.toFixed(0)}%;background:${barColor}"></div></div>
+      </div>
+      <div class="li-right">
+        <div class="li-value">${pr.pct.toFixed(0)}%</div>
+        <span class="badge ${st.badge}" style="font-size:.6rem">${st.label}</span>
+      </div>
+    </div>
+    ${pr.atrasada?`<div class="os-flag">⏰ Prazo vencido há ${Math.abs(pr.diasRestantes)} dia(s)</div>`:''}
+    ${pr.noRitmo===false?`<div class="os-flag os-flag-pace">📉 ${fmtNum(Math.abs(pr.desvioRitmo))} ha abaixo do ritmo planejado (esperado ${fmtNum(pr.esperado)} ha)</div>`:''}
+    <div class="li-actions">
+      ${pr.ativa && can('apontarOrdem')?`<button class="btn btn-primary btn-sm" onclick="openApontamentoForm('${o.id}')">📝 Apontar dia</button>`:''}
+      <button class="btn btn-secondary btn-sm" onclick="openOrdemDetail('${o.id}')">👁️ Detalhes</button>
+      ${can('manageOrdens')?`<button class="btn btn-secondary btn-sm" onclick="openOrdemForm('${o.id}')">✏️ Editar</button>`:''}
+    </div>
+  </div>`;
+}
+
+// ── Formulário de OS (criação/edição — gestor e agrônomo) ──
+function openOrdemForm(id) {
+  if (!can('manageOrdens')) { toast('Apenas gestor/agrônomo abrem OS','error'); return; }
+  const o = id ? byId(DB.ordens,id) : null;
+  if (!DB.talhoes.length) { toast('Cadastre um talhão antes de abrir a OS','error'); navTo('talhoes'); return; }
+  const tOpts = `<option value="">— Selecione —</option>` + DB.talhoes.map(t=>`<option value="${t.id}" data-area="${t.area}" ${o?.talhao===t.id?'selected':''}>${esc(t.nome)} — ${t.area} ha</option>`).join('');
+  const rOpts = `<option value="">— Nenhuma —</option>` + DB.receitas.map(r=>`<option value="${r.id}" ${o?.receita===r.id?'selected':''}>${esc(r.nome)}</option>`).join('');
+  const tratoristas = DB.usuarios.filter(u=>u.perfil==='tratorista' && u.ativo);
+  const respOpts = `<option value="">— Não atribuído —</option>` + tratoristas.map(u=>`<option value="${u.id}" ${o?.responsavel===u.id?'selected':''}>${esc(u.nome)}</option>`).join('');
+
+  openModal(`
+    <div class="modal-hdr"><span class="modal-title">${o?`✏️ Editar ${esc(o.codigo)}`:'📋 Nova Ordem de Serviço'}</span>
+      <button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Talhão</label>
+        <select class="form-input" id="fOSTalhao" onchange="osFillArea()">${tOpts}</select></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Tipo de serviço</label>
+          <select class="form-input" id="fOSTipo">${OS_TIPOS.map(x=>`<option ${o?.tipo===x?'selected':''}>${x}</option>`).join('')}</select></div>
+        <div class="form-group"><label class="form-label">Área planejada (ha)</label>
+          <input class="form-input" id="fOSArea" type="number" step=".1" min="0" placeholder="0.0" value="${o?.area_total||''}" onchange="osRitmoHint()"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Descrição do serviço</label>
+        <input class="form-input" id="fOSDesc" placeholder="Ex: Aplicação de fungicida fase R1" value="${escAttr(o?.descricao||'')}"></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Início previsto</label>
+          <input class="form-input" id="fOSInicio" type="date" value="${o?.data_inicio||today()}" onchange="osRitmoHint()"></div>
+        <div class="form-group"><label class="form-label">Prazo final</label>
+          <input class="form-input" id="fOSPrazo" type="date" value="${o?.data_prazo||''}" onchange="osRitmoHint()"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Ritmo planejado (ha/dia) <span style="font-weight:400;color:var(--txt3)">— opcional</span></label>
+        <input class="form-input" id="fOSRitmo" type="number" step=".1" min="0" placeholder="auto pelo prazo" value="${o?.ritmo_dia||''}">
+        <div class="form-hint" id="fOSRitmoHint"></div></div>
+      <div class="form-group"><label class="form-label">Responsável (tratorista)</label>
+        <select class="form-input" id="fOSResp">${respOpts}</select></div>
+      <div class="form-group"><label class="form-label">Receita vinculada (opcional)</label>
+        <select class="form-input" id="fOSReceita">${rOpts}</select></div>
+      ${o?`<div class="form-group"><label class="form-label">Status</label>
+        <select class="form-input" id="fOSStatus">${Object.entries(OS_STATUS).map(([k,v])=>`<option value="${k}" ${o.status===k?'selected':''}>${v.icon} ${v.label}</option>`).join('')}</select></div>`:''}
+      <div class="form-group"><label class="form-label">Observações</label>
+        <textarea class="form-input" id="fOSObs" rows="2">${esc(o?.obs||'')}</textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary btn-block" onclick="saveOrdem('${id||''}')">💾 ${o?'Salvar alterações':'Abrir OS'}</button>
+    </div>
+  `);
+  setTimeout(osRitmoHint, 30);
+}
+
+function osFillArea() {
+  const opt = document.getElementById('fOSTalhao')?.selectedOptions?.[0];
+  const areaEl = document.getElementById('fOSArea');
+  if (opt?.dataset?.area && areaEl && !areaEl.value) areaEl.value = opt.dataset.area;
+}
+
+// Mostra o ritmo (ha/dia) derivado do prazo quando o campo é deixado em branco
+function osRitmoHint() {
+  const hint = document.getElementById('fOSRitmoHint'); if (!hint) return;
+  const area = parseFloat(document.getElementById('fOSArea')?.value)||0;
+  const ini  = document.getElementById('fOSInicio')?.value;
+  const praz = document.getElementById('fOSPrazo')?.value;
+  if (area>0 && ini && praz) {
+    const dias = Math.max(1, Math.round((new Date(praz+'T00:00:00')-new Date(ini+'T00:00:00'))/(1000*60*60*24))+1);
+    hint.textContent = `Em branco = ${fmtNum(area/dias)} ha/dia (${fmtNum(area)} ha em ${dias} dia(s)).`;
+  } else {
+    hint.textContent = 'Em branco = calcula automaticamente pela janela início→prazo.';
+  }
+}
+
+function saveOrdem(id) {
+  if (!can('manageOrdens')) { toast('Sem permissão','error'); return; }
+  const talhao = document.getElementById('fOSTalhao').value;
+  const tipo = document.getElementById('fOSTipo').value;
+  const descricao = document.getElementById('fOSDesc').value.trim();
+  const area = parseFloat(document.getElementById('fOSArea').value)||0;
+  if (!area || area<=0) { toast('Informe a área planejada','error'); return; }
+  const data = {
+    talhao, tipo, descricao, area_total:area,
+    data_inicio:document.getElementById('fOSInicio').value,
+    data_prazo:document.getElementById('fOSPrazo').value,
+    ritmo_dia:parseFloat(document.getElementById('fOSRitmo').value)||0,
+    responsavel:document.getElementById('fOSResp').value,
+    receita:document.getElementById('fOSReceita').value,
+    obs:document.getElementById('fOSObs').value
+  };
+  if (id) {
+    const o = byId(DB.ordens,id); Object.assign(o, data);
+    const stv = document.getElementById('fOSStatus')?.value; if (stv) o.status = stv;
+  } else {
+    const n = nextOsNumero();
+    DB.ordens.push({ id:uid(), numero:n, codigo:osCodigo(n), status:'aberta', ...data, criado_por:currentUser.id, criado_em:today() });
+  }
+  saveDB(); closeModal(); toast(id?'OS atualizada!':`OS aberta!`); renderOrdens();
+}
+
+function setOrdemStatus(id, status) {
+  if (!can('manageOrdens')) { toast('Sem permissão','error'); return; }
+  const o = byId(DB.ordens,id); if (!o) return;
+  o.status = status; saveDB();
+  toast(`OS ${(OS_STATUS[status]||{}).label?.toLowerCase()||'atualizada'}`);
+  closeModal(); openOrdemDetail(id);
+}
+
+function deleteOrdem(id) {
+  if (!can('manageOrdens')) { toast('Sem permissão','error'); return; }
+  if (!confirm('Excluir esta OS e todos os apontamentos vinculados?')) return;
+  DB.ordens = DB.ordens.filter(o=>o.id!==id);
+  DB.apontamentos = DB.apontamentos.filter(a=>a.ordem!==id);
+  saveDB(); closeModal(); toast('OS excluída'); renderOrdens();
+}
+
+// ── Detalhe da OS com timeline de apontamentos ──
+function openOrdemDetail(id) {
+  const o = byId(DB.ordens,id); if (!o) return;
+  const pr = osProgress(o);
+  const st = OS_STATUS[o.status] || OS_STATUS.aberta;
+  const t = byId(DB.talhoes, o.talhao);
+  const r = byId(DB.receitas, o.receita);
+  const resp = byId(DB.usuarios, o.responsavel);
+  const aps = pr.aps.slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+  const atrasos = aps.filter(a=>a.status_dia==='atrasado');
+  const motivoCount = {};
+  atrasos.forEach(a=>{ const m = a.motivo||'Outro'; motivoCount[m] = (motivoCount[m]||0)+1; });
+  const barColor = o.status==='concluida' ? 'var(--g600)' : pr.atrasada ? 'var(--r600)' : 'var(--a600)';
+
+  openModal(`
+    <div class="modal-hdr"><span class="modal-title">${st.icon} ${esc(o.codigo)}</span>
+      <button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="flex-between mb-1">
+        <div style="font-size:.95rem;font-weight:600">${esc(o.tipo||'Serviço')}</div>
+        <span class="badge ${st.badge}">${st.label}</span>
+      </div>
+      ${o.descricao?`<div style="font-size:.85rem;color:var(--txt2);margin-bottom:.75rem">${esc(o.descricao)}</div>`:''}
+
+      <div class="os-progress-big">
+        <div class="flex-between"><span class="metric-lbl">Andamento</span><span style="font-weight:800;color:${barColor}">${pr.pct.toFixed(0)}%</span></div>
+        <div class="stock-bar" style="height:10px;margin-top:.45rem"><div class="stock-bar-fill" style="width:${pr.pct.toFixed(0)}%;background:${barColor}"></div></div>
+        <div class="li-sub" style="margin-top:.45rem">${fmtNum(pr.areaFeita)} de ${fmtNum(pr.total)} ha · ${pr.dias} dia(s) trabalhado(s)${pr.total>pr.areaFeita?` · faltam ${fmtNum(pr.total-pr.areaFeita)} ha`:''}</div>
+        ${pr.esperado!=null?`<div class="li-sub" style="margin-top:.3rem">Ritmo ${fmtNum(pr.ritmo)} ha/dia · esperado p/ hoje ${fmtNum(pr.esperado)} ha · <span style="font-weight:700;color:${pr.noRitmo?'var(--g700)':'var(--r600)'}">${pr.noRitmo?'✓ no ritmo':`${fmtNum(Math.abs(pr.desvioRitmo))} ha atrás`}</span></div>`:''}
+      </div>
+
+      <div class="stats-grid mt-2">
+        <div class="stat-card"><div class="stat-lbl">Talhão</div><div class="stat-val" style="font-size:1rem">${t?esc(t.nome):'—'}</div></div>
+        <div class="stat-card"><div class="stat-lbl">Prazo</div><div class="stat-val" style="font-size:1rem">${o.data_prazo?fmtDate(o.data_prazo):'—'}</div>${o.data_prazo&&pr.ativa?`<div class="stat-sub" style="color:${pr.atrasada?'var(--r600)':'var(--txt3)'}">${pr.atrasada?`atrasada ${Math.abs(pr.diasRestantes)}d`:`faltam ${pr.diasRestantes}d`}</div>`:''}</div>
+        ${resp?`<div class="stat-card"><div class="stat-lbl">Responsável</div><div class="stat-val" style="font-size:1rem">${esc(resp.nome)}</div></div>`:''}
+        ${r?`<div class="stat-card"><div class="stat-lbl">Receita</div><div class="stat-val" style="font-size:1rem">${esc(r.nome)}</div></div>`:''}
+      </div>
+
+      ${atrasos.length?`<div class="alert alert-warn mt-2">⚠️ <b>${atrasos.length} dia(s) fora do planejado.</b> ${Object.entries(motivoCount).sort((a,b)=>b[1]-a[1]).map(([m,c])=>`${esc(m)} (${c})`).join(' · ')}</div>`:''}
+
+      <div class="sec-lbl mt-2">Apontamentos diários</div>
+      ${aps.length?aps.map(apontamentoItemHtml).join(''):'<div class="empty-state" style="padding:1.25rem 0"><div class="empty-sub">Nenhum apontamento registrado ainda</div></div>'}
+      ${o.obs?`<div class="alert alert-info mt-2">📝 ${esc(o.obs)}</div>`:''}
+    </div>
+    <div class="modal-footer">
+      ${pr.ativa&&can('apontarOrdem')?`<button class="btn btn-primary btn-block" onclick="closeModal();openApontamentoForm('${o.id}')">📝 Apontar dia de trabalho</button>`:''}
+      ${can('manageOrdens')?`<div class="export-btns" style="margin-top:0">
+        ${pr.ativa?`<button class="btn btn-secondary" onclick="setOrdemStatus('${o.id}','concluida')">✅ Concluir</button>`:`<button class="btn btn-secondary" onclick="setOrdemStatus('${o.id}','em_andamento')">↩️ Reabrir</button>`}
+        <button class="btn btn-danger" onclick="deleteOrdem('${o.id}')">🗑️ Excluir</button>
+      </div>`:''}
+    </div>
+  `);
+}
+
+function apontamentoItemHtml(a) {
+  const u = byId(DB.usuarios, a.usuario);
+  const atrasado = a.status_dia==='atrasado';
+  const podeExcluir = can('manageOrdens') || a.usuario===currentUser.id;
+  return `<div class="apont-item ${atrasado?'apont-late':''}">
+    <div class="flex-between">
+      <div style="font-size:.85rem;font-weight:600">${fmtDate(a.data)} · ${fmtNum(a.area_feita)} ha</div>
+      <span class="badge ${atrasado?'badge-warn':'badge-ok'}" style="font-size:.6rem">${atrasado?'Fora do planejado':'No planejado'}</span>
+    </div>
+    ${a.descricao?`<div style="font-size:.8rem;color:var(--txt2);margin-top:.3rem">${esc(a.descricao)}</div>`:''}
+    ${atrasado?`<div style="font-size:.78rem;color:var(--a800);margin-top:.3rem">⚠️ ${esc(a.motivo||'Motivo não informado')}${a.motivo_detalhe?`: ${esc(a.motivo_detalhe)}`:''}</div>`:''}
+    <div class="li-sub" style="margin-top:.3rem">${a.horas?`${fmtNum(a.horas)}h · `:''}${u?esc(u.nome):'—'}${podeExcluir?` · <span onclick="deleteApontamento('${a.id}','${a.ordem}')" style="color:var(--r600);cursor:pointer">excluir</span>`:''}</div>
+  </div>`;
+}
+
+// ── Apontamento diário (tratorista registra o que foi feito no dia) ──
+function openApontamentoForm(ordemId) {
+  if (!can('apontarOrdem')) { toast('Sem permissão para apontar','error'); return; }
+  const o = byId(DB.ordens, ordemId); if (!o) return;
+  const pr = osProgress(o);
+  const t = byId(DB.talhoes, o.talhao);
+  const restante = Math.max(0, (o.area_total||0)-pr.areaFeita);
+  openModal(`
+    <div class="modal-hdr"><span class="modal-title">📝 Apontamento — ${esc(o.codigo)}</span>
+      <button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="alert alert-info">${esc(o.tipo||'Serviço')}${t?` · ${esc(t.nome)}`:''} — ${fmtNum(pr.areaFeita)}/${fmtNum(o.area_total||0)} ha (${pr.pct.toFixed(0)}%)</div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Data</label>
+          <input class="form-input" id="fAPData" type="date" value="${today()}"></div>
+        <div class="form-group"><label class="form-label">Área feita hoje (ha)</label>
+          <input class="form-input" id="fAPArea" type="number" step=".1" min="0" placeholder="${restante>0?fmtNum(restante)+' rest.':'0.0'}"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Horas trabalhadas (opcional)</label>
+        <input class="form-input" id="fAPHoras" type="number" step=".5" min="0" placeholder="0"></div>
+      <div class="form-group"><label class="form-label">O que foi feito hoje</label>
+        <textarea class="form-input" id="fAPDesc" rows="2" placeholder="Ex: Pulverizado o lado norte do talhão, ~30 ha..."></textarea></div>
+
+      <div class="sec-lbl mt-1">Andamento do serviço</div>
+      <div class="seg-toggle">
+        <label class="seg-opt"><input type="radio" name="apStatus" value="no_prazo" checked onchange="onApontStatus()"><span>✅ Dentro do<br>planejado</span></label>
+        <label class="seg-opt"><input type="radio" name="apStatus" value="atrasado" onchange="onApontStatus()"><span>⚠️ Fora do<br>planejado</span></label>
+      </div>
+
+      <div id="apMotivoBox" class="hidden mt-2">
+        <div class="form-group"><label class="form-label">Motivo</label>
+          <select class="form-input" id="fAPMotivo">${OS_MOTIVOS.map(m=>`<option>${m}</option>`).join('')}</select></div>
+        <div class="form-group"><label class="form-label">Detalhe do motivo</label>
+          <textarea class="form-input" id="fAPMotDet" rows="2" placeholder="Ex: Choveu à tarde / bico entupido / trator quebrou..."></textarea></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary btn-block" onclick="saveApontamento('${ordemId}')">💾 Registrar apontamento</button>
+    </div>
+  `);
+}
+
+function onApontStatus() {
+  const v = document.querySelector('input[name="apStatus"]:checked')?.value;
+  document.getElementById('apMotivoBox')?.classList.toggle('hidden', v!=='atrasado');
+  document.querySelectorAll('.seg-opt').forEach(el=>el.classList.toggle('seg-on', el.querySelector('input')?.checked));
+}
+
+function saveApontamento(ordemId) {
+  if (!can('apontarOrdem')) { toast('Sem permissão','error'); return; }
+  const o = byId(DB.ordens, ordemId); if (!o) return;
+  const data = document.getElementById('fAPData').value || today();
+  const area = parseFloat(document.getElementById('fAPArea').value)||0;
+  const desc = document.getElementById('fAPDesc').value.trim();
+  const status_dia = document.querySelector('input[name="apStatus"]:checked')?.value || 'no_prazo';
+  if (area<=0 && !desc) { toast('Informe a área feita ou descreva o serviço','error'); return; }
+  const ap = {
+    id:uid(), ordem:ordemId, data, area_feita:area,
+    horas:parseFloat(document.getElementById('fAPHoras').value)||0,
+    descricao:desc, status_dia, usuario:currentUser.id, criado_em:today()
+  };
+  if (status_dia==='atrasado') {
+    ap.motivo = document.getElementById('fAPMotivo').value;
+    ap.motivo_detalhe = document.getElementById('fAPMotDet').value.trim();
+  }
+  DB.apontamentos.push(ap);
+  if (o.status==='aberta') o.status = 'em_andamento';
+  const pr = osProgress(o);
+  if (o.area_total>0 && pr.areaFeita>=o.area_total && o.status!=='concluida'
+      && confirm('Área planejada atingida. Marcar OS como concluída?')) {
+    o.status = 'concluida';
+  }
+  saveDB(); closeModal();
+  toast(status_dia==='atrasado'?'Apontamento registrado (com ocorrência)':'Apontamento registrado!');
+  renderTabContent(curTab);
+}
+
+function deleteApontamento(id, ordemId) {
+  const a = byId(DB.apontamentos, id); if (!a) return;
+  if (!(can('manageOrdens') || a.usuario===currentUser.id)) { toast('Sem permissão','error'); return; }
+  if (!confirm('Excluir este apontamento?')) return;
+  DB.apontamentos = DB.apontamentos.filter(x=>x.id!==id);
+  saveDB(); toast('Apontamento excluído');
+  closeModal(); openOrdemDetail(ordemId);
 }
 
 // ──────────── RELATÓRIOS ────────────
@@ -1164,6 +1634,11 @@ function renderRelatorios() {
   const custoPorHa = totalHa>0 ? totalCusto/totalHa : 0;
   const mesAtual = new Date().toISOString().slice(0,7);
   const apMes = DB.aplicacoes.filter(a=>a.data?.startsWith(mesAtual));
+  const osAtivas = DB.ordens.filter(o=>o.status==='aberta'||o.status==='em_andamento');
+  const osAtrasadas = osAtivas.filter(o=>osProgress(o).atrasada);
+  const atrasosMes = DB.apontamentos.filter(a=>a.status_dia==='atrasado' && a.data?.startsWith(mesAtual));
+  const motivoMes = {};
+  atrasosMes.forEach(a=>{ const m = a.motivo||'Outro'; motivoMes[m] = (motivoMes[m]||0)+1; });
   const desperdicioApps = DB.aplicacoes.filter(a=>{
     if (!a.receita||!a.vol_real||!a.area_ha) return false;
     const r = byId(DB.receitas,a.receita);
@@ -1184,6 +1659,23 @@ function renderRelatorios() {
     </div>
 
     ${desperdicioApps.length?`<div class="alert alert-warn">⚠️ <b>${desperdicioApps.length} aplicação(ões) com possível desperdício</b> — volume real abaixo de 85% do planejado.</div>`:''}
+
+    ${DB.ordens.length?`<div class="sec-lbl mt-2">Andamento de serviços</div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-lbl">OS em aberto</div><div class="stat-val">${osAtivas.length}</div><div class="stat-sub">${osAtrasadas.length} atrasada(s)</div></div>
+      <div class="stat-card"><div class="stat-lbl">Dias fora do plano</div><div class="stat-val">${atrasosMes.length}</div><div class="stat-sub">no mês</div></div>
+    </div>
+    <div class="list-card">${osAtivas.length?osAtivas.map(o=>{
+      const pr = osProgress(o); const t = byId(DB.talhoes,o.talhao);
+      const barColor = pr.atrasada?'var(--r600)':'var(--a600)';
+      return `<div class="list-item" onclick="openOrdemDetail('${o.id}')">
+        <div class="li-icon" style="background:var(--g50)">${(OS_STATUS[o.status]||{}).icon||'📋'}</div>
+        <div class="li-body"><div class="li-title">${esc(o.codigo)} — ${esc(o.tipo||'Serviço')}</div>
+          <div class="li-sub">${t?esc(t.nome):'—'} · ${fmtNum(pr.areaFeita)}/${fmtNum(pr.total)} ha${pr.atrasada?' · ⏰ atrasada':''}</div>
+          <div class="stock-bar"><div class="stock-bar-fill" style="width:${pr.pct.toFixed(0)}%;background:${barColor}"></div></div></div>
+        <div class="li-right"><div class="li-value">${pr.pct.toFixed(0)}%</div></div>
+      </div>`;}).join(''):'<div class="list-item" style="cursor:default"><span style="font-size:.85rem;color:var(--txt3)">Nenhuma OS em aberto</span></div>'}</div>
+    ${Object.keys(motivoMes).length?`<div class="alert alert-warn">⚠️ <b>Motivos de atraso no mês:</b> ${Object.entries(motivoMes).sort((a,b)=>b[1]-a[1]).map(([m,c])=>`${esc(m)} (${c})`).join(' · ')}</div>`:''}`:''}
 
     <div class="sec-lbl mt-2">Custo por talhão</div>
     <div class="list-card">${DB.talhoes.length ? DB.talhoes.map(t=>{
@@ -1409,6 +1901,26 @@ function exportPDF() {
     alternateRowStyles:{fillColor:[240,244,236]}
   });
 
+  // Ordens de Serviço
+  if (DB.ordens.length) {
+    y = doc.lastAutoTable.finalY + 10;
+    if (y > 230) { doc.addPage(); y = 20; }
+    doc.setFontSize(11); doc.setFont(undefined,'bold');
+    doc.text('Ordens de Serviço', 14, y); y+=6;
+    const osRows = DB.ordens.map(o=>{
+      const pr = osProgress(o);
+      const t = byId(DB.talhoes,o.talhao);
+      return [o.codigo, o.tipo||'—', t?t.nome:'—', (OS_STATUS[o.status]||{}).label||o.status, fmtNum(pr.areaFeita)+'/'+fmtNum(pr.total), pr.pct.toFixed(0)+'%', o.data_prazo?fmtDate(o.data_prazo):'—'];
+    });
+    doc.autoTable({
+      startY:y, margin:{left:14,right:14},
+      head:[['OS','Tipo','Talhão','Status','Área (ha)','%','Prazo']],
+      body:osRows,
+      styles:{fontSize:8}, headStyles:{fillColor:[27,94,32]},
+      alternateRowStyles:{fillColor:[240,244,236]}
+    });
+  }
+
   // Footer
   const pages = doc.internal.getNumberOfPages();
   for (let i=1;i<=pages;i++) {
@@ -1469,6 +1981,27 @@ function exportExcel() {
     talData.push([t.nome, t.area, t.cultura||'', t.safra||'', aps.length, haAp, cprod, coper, ctot, haAp>0?+(ctot/haAp).toFixed(2):0]);
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(talData), 'Custo por Talhão');
+
+  // Aba: Ordens de Serviço
+  const osData = [['OS','Tipo','Descrição','Talhão','Status','Área Planejada (ha)','Área Feita (ha)','% Concluído','Ritmo Plan. (ha/dia)','Esperado p/ Hoje (ha)','Desvio Ritmo (ha)','Início','Prazo','Responsável','Dias Trabalhados','Dias em Atraso']];
+  DB.ordens.forEach(o=>{
+    const pr = osProgress(o);
+    const t = byId(DB.talhoes,o.talhao);
+    const resp = byId(DB.usuarios,o.responsavel);
+    const atrasos = pr.aps.filter(a=>a.status_dia==='atrasado').length;
+    osData.push([o.codigo, o.tipo||'', o.descricao||'', t?.nome||'—', (OS_STATUS[o.status]||{}).label||o.status, o.area_total||0, +pr.areaFeita.toFixed(1), +pr.pct.toFixed(0), pr.ritmo?+pr.ritmo.toFixed(1):'', pr.esperado!=null?+pr.esperado.toFixed(1):'', pr.desvioRitmo!=null?+pr.desvioRitmo.toFixed(1):'', o.data_inicio||'', o.data_prazo||'', resp?.nome||'—', pr.dias, atrasos]);
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(osData), 'Ordens de Serviço');
+
+  // Aba: Apontamentos diários
+  const apoData = [['Data','OS','Talhão','Área Feita (ha)','Horas','Andamento','Motivo','Detalhe do Motivo','O que foi feito','Tratorista']];
+  DB.apontamentos.slice().sort((a,b)=>(a.data||'').localeCompare(b.data||'')).forEach(a=>{
+    const o = byId(DB.ordens,a.ordem);
+    const t = o ? byId(DB.talhoes,o.talhao) : null;
+    const u = byId(DB.usuarios,a.usuario);
+    apoData.push([a.data, o?.codigo||'—', t?.nome||'—', a.area_feita||0, a.horas||'', a.status_dia==='atrasado'?'Fora do planejado':'No planejado', a.motivo||'', a.motivo_detalhe||'', a.descricao||'', u?.nome||'—']);
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(apoData), 'Apontamentos');
 
   // Aba: Leituras ΔT
   const dtData = [['Data','Delta T','Temperatura (°C)','UR (%)','Vento (km/h)','Talhão','Usuário']];

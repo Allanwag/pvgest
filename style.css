@@ -228,6 +228,17 @@ textarea.form-input{resize:vertical;min-height:80px}
 .alert-danger{background:var(--r50);color:var(--r800);border:1px solid var(--r100)}
 .alert-info{background:var(--b50);color:var(--b800)}
 
+/* ========== ORDENS DE SERVIÇO ========== */
+.os-flag{font-size:.72rem;font-weight:600;padding:.4rem 1rem;background:var(--r50);color:var(--r800);border-top:1px solid var(--brd)}
+.os-flag-pace{background:var(--a50);color:var(--a800)}
+.os-progress-big{background:var(--surf2);border-radius:var(--rs);padding:.875rem}
+.apont-item{border:1px solid var(--brd);border-left:3px solid var(--g600);border-radius:var(--rs);padding:.625rem .75rem;margin-bottom:.5rem;background:var(--surf)}
+.apont-item.apont-late{border-left-color:var(--a600)}
+.seg-toggle{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+.seg-opt{position:relative;display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.25;border:1.5px solid var(--brd2);border-radius:var(--rs);padding:.6rem .4rem;font-size:.8rem;font-weight:600;color:var(--txt2);cursor:pointer;transition:border-color .15s,background .15s}
+.seg-opt input{position:absolute;opacity:0;pointer-events:none}
+.seg-opt:has(input:checked),.seg-opt.seg-on{border-color:var(--g700);background:var(--g50);color:var(--g800)}
+
 /* ========== RECEITA CALC ========== */
 .calc-result-item{display:flex;justify-content:space-between;align-items:center;padding:.625rem 0;border-bottom:1px solid var(--brd);font-size:.85rem}
 .calc-result-item:last-child{border-bottom:none}
