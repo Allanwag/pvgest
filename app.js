@@ -777,8 +777,21 @@ function openReceitaDetail(id) {
         </div>`;}).join('')}
       ${r.obs?`<div class="alert alert-info mt-2">📝 ${esc(r.obs)}</div>`:''}
     </div>
-    <div class="modal-footer"><button class="btn btn-primary btn-block" onclick="closeModal();openCalculadora('${id}')">📐 Calcular para minha área</button></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary btn-block" onclick="closeModal();openCalculadora('${id}')">📐 Calcular para minha área</button>
+      <button class="btn btn-secondary btn-block" style="margin-bottom:0" onclick="verificarCalda('${id}')">🧪 Verificar compatibilidade da calda</button>
+    </div>
   `);
+}
+
+// Abre o Gefaz Calda (app irmão, mesma origem em allanwag.github.io) com a receita montada
+// para análise de compatibilidade físico-química e agronômica. Cultura, alvo, volume e produtos
+// vão no deep-link; água, equipamento e regras da fazenda ficam na configuração do Gefaz Calda.
+function verificarCalda(id) {
+  const r = byId(DB.receitas,id); if (!r) return;
+  if (!window.GefazCalda) { toast('Gefaz Calda não carregou — verifique a conexão e recarregue','error'); return; }
+  const w = GefazCalda.abrir(GefazCalda.dePVGest(r, DB.produtos));
+  if (!w) toast('Permita pop-ups para abrir o Gefaz Calda','error');
 }
 
 // Items temporários da receita sendo editada
