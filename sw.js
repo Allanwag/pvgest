@@ -1,4 +1,4 @@
-const CACHE = 'pvgest-v8';
+const CACHE = 'pvgest-v9';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 // Libs de exportação (PDF/Excel) — precisam estar no cache para funcionar offline
 const CDN_ASSETS = [
