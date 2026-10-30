@@ -1,4 +1,4 @@
-const CACHE = 'pvgest-v10';
+const CACHE = 'pvgest-v11';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 // Libs de exportação (PDF/Excel) — precisam estar no cache para funcionar offline
 const CDN_ASSETS = [
@@ -23,10 +23,13 @@ self.addEventListener('fetch', e => {
   // Recursos de outros apps da mesma origem (ex.: ../gefaz-calda/sdk.js): rede primeiro, cache só como reserva offline,
   // para não prender uma versão antiga do SDK no cache do PVGest
   if (!e.request.url.startsWith(self.registration.scope) && !CDN_ASSETS.includes(e.request.url)) {
-    e.respondWith(fetch(e.request).then(res => {
+    const rede = fetch(e.request).then(res => {
       if (res && res.status === 200) { const clone = res.clone(); caches.open(CACHE).then(c => c.put(e.request, clone)); }
       return res;
-    }).catch(() => caches.match(e.request).then(r => r || Response.error())));
+    });
+    // Rede travada não responde nem falha: depois de 4 s vale o cache
+    const limite = new Promise((_, rejeita) => setTimeout(rejeita, 4000));
+    e.respondWith(Promise.race([rede, limite]).catch(() => caches.match(e.request).then(r => r || Response.error())));
     return;
   }
   e.respondWith(
