@@ -181,3 +181,20 @@ test('A6 tratorista não exclui aplicação; "não" no confirm mantém', () => {
   a.login('u1'); a.confirmar = false; a.run('deleteAplicacao(DB.aplicacoes[0].id)');
   assert.equal(a.run('DB.aplicacoes.length'), 1);
 });
+
+test('A7 OS com prazo ontem está atrasada; prazo hoje vence hoje', () => {
+  const a = pronto();
+  a.run(`DB.ordens = [{id:'o1',codigo:'OS-0001',numero:1,status:'aberta',area_total:10,data_prazo:'2026-11-14'},
+                      {id:'o2',codigo:'OS-0002',numero:2,status:'aberta',area_total:10,data_prazo:'2026-11-15'}]`);
+  assert.deepEqual(a.json('DB.ordens.map(o => [osProgress(o).diasRestantes, osProgress(o).atrasada])'), [[-1, true], [0, false]]);
+  a.run(`openOrdemDetail('o2')`);
+  assert.match(a.el('modalSheet').innerHTML, /vence hoje/);
+  a.setAgora('2026-11-15T23:30:00');
+  assert.equal(a.run('osProgress(DB.ordens[1]).atrasada'), false);
+});
+
+test('A14 mês do relatório é o mês local', () => {
+  const a = pronto({ agora: '2026-11-30T22:00:00' });
+  a.run(`DB.aplicacoes = [{id:'x',data:'2026-11-30',talhao:'t1',area_ha:1,custo_total:0}]; renderRelatorios()`);
+  assert.match(a.el('tab-relatorios').innerHTML, /Aplicações no mês<\/div><div class="stat-val">1</);
+});

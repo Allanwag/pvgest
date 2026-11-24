@@ -1124,7 +1124,7 @@ function checkRetrabalho(talhaoId) {
   const aps = DB.aplicacoes.filter(a=>a.talhao===talhaoId).sort((a,b)=>(b.data||'').localeCompare(a.data||''));
   if (!aps.length) return null;
   const last = aps[0];
-  const dias = Math.floor((new Date()-new Date(last.data+'T00:00:00'))/(1000*60*60*24));
+  const dias = diasEntre(last.data, today());
   if (dias < limite) {
     return { dias, receita: aplicReceitaNome(last)||'Aplicação anterior' };
   }
@@ -1319,7 +1319,7 @@ function osProgress(o) {
   const ativa = o.status==='aberta' || o.status==='em_andamento';
   let diasRestantes = null, atrasada = false;
   if (o.data_prazo) {
-    diasRestantes = Math.ceil((new Date(o.data_prazo+'T23:59:59') - new Date())/(1000*60*60*24));
+    diasRestantes = diasEntre(today(), o.data_prazo);
     atrasada = ativa && diasRestantes < 0;
   }
   // Esperado vs. realizado pelo ritmo planejado (só faz sentido enquanto a OS está em execução)
@@ -1581,7 +1581,7 @@ function openOrdemDetail(id) {
 
       <div class="stats-grid mt-2">
         <div class="stat-card"><div class="stat-lbl">Talhão</div><div class="stat-val" style="font-size:1rem">${t?esc(t.nome):'—'}</div></div>
-        <div class="stat-card"><div class="stat-lbl">Prazo</div><div class="stat-val" style="font-size:1rem">${o.data_prazo?fmtDate(o.data_prazo):'—'}</div>${o.data_prazo&&pr.ativa?`<div class="stat-sub" style="color:${pr.atrasada?'var(--r600)':'var(--txt3)'}">${pr.atrasada?`atrasada ${Math.abs(pr.diasRestantes)}d`:`faltam ${pr.diasRestantes}d`}</div>`:''}</div>
+        <div class="stat-card"><div class="stat-lbl">Prazo</div><div class="stat-val" style="font-size:1rem">${o.data_prazo?fmtDate(o.data_prazo):'—'}</div>${o.data_prazo&&pr.ativa?`<div class="stat-sub" style="color:${pr.atrasada?'var(--r600)':'var(--txt3)'}">${pr.atrasada?`atrasada ${Math.abs(pr.diasRestantes)}d`:(pr.diasRestantes===0?`vence hoje`:`faltam ${pr.diasRestantes}d`)}</div>`:''}</div>
         ${resp?`<div class="stat-card"><div class="stat-lbl">Responsável</div><div class="stat-val" style="font-size:1rem">${esc(resp.nome)}</div></div>`:''}
         ${r?`<div class="stat-card"><div class="stat-lbl">Receita</div><div class="stat-val" style="font-size:1rem">${esc(r.nome)}</div></div>`:''}
       </div>
@@ -1714,7 +1714,7 @@ function renderRelatorios() {
   const totalHa = DB.aplicacoes.reduce((s,a)=>s+(a.area_ha||0),0);
   const totalCusto = DB.aplicacoes.reduce((s,a)=>s+(a.custo_total||0),0);
   const custoPorHa = totalHa>0 ? totalCusto/totalHa : 0;
-  const mesAtual = new Date().toISOString().slice(0,7);
+  const mesAtual = today().slice(0,7);
   const apMes = DB.aplicacoes.filter(a=>a.data?.startsWith(mesAtual));
   const osAtivas = DB.ordens.filter(o=>o.status==='aberta'||o.status==='em_andamento');
   const osAtrasadas = osAtivas.filter(o=>osProgress(o).atrasada);
