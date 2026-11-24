@@ -557,7 +557,12 @@ function saveTalhao(id) {
   saveDB(); closeModal(); toast(id?'Talhão atualizado!':'Talhão cadastrado!'); renderTalhoes();
 }
 
+const osEmAberto = o => o.status==='aberta' || o.status==='em_andamento';
+const listaCurta = nomes => nomes.slice(0,3).join(', ');
+
 function deleteTalhao(id) {
+  const oss = DB.ordens.filter(o=>o.talhao===id && osEmAberto(o));
+  if (oss.length) { toast(`Talhão com OS em aberto (${listaCurta(oss.map(o=>o.codigo))}). Conclua ou cancele a OS antes de excluir.`,'error'); return; }
   if (!confirm('Excluir este talhão? As aplicações associadas serão mantidas.')) return;
   DB.talhoes = DB.talhoes.filter(t=>t.id!==id);
   saveDB(); toast('Talhão excluído'); renderTalhoes();
@@ -688,6 +693,8 @@ function saveProduto(id) {
 }
 
 function deleteProduto(id) {
+  const recs = DB.receitas.filter(r=>(r.itens||[]).some(i=>i.produto===id));
+  if (recs.length) { toast(`Produto usado na receita ${listaCurta(recs.map(r=>'"'+r.nome+'"'))}. Tire-o da receita antes de excluir.`,'error'); return; }
   if (!confirm('Excluir este produto?')) return;
   DB.produtos = DB.produtos.filter(p=>p.id!==id);
   saveDB(); toast('Produto excluído'); renderEstoque();
@@ -956,6 +963,8 @@ function saveReceita(id) {
 }
 
 function deleteReceita(id) {
+  const oss = DB.ordens.filter(o=>o.receita===id && osEmAberto(o));
+  if (oss.length) { toast(`Receita ligada a OS em aberto (${listaCurta(oss.map(o=>o.codigo))}). Conclua ou cancele a OS antes de excluir.`,'error'); return; }
   if (!confirm('Excluir esta receita?')) return;
   DB.receitas = DB.receitas.filter(r=>r.id!==id);
   saveDB(); toast('Receita excluída'); renderReceitas();

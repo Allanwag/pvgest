@@ -369,3 +369,18 @@ test('A18 PDF sem Δ, ordenado e dizendo que cortou em 30', () => {
   assert.match(tudo, /30 mais recentes de 31/);
   assert.ok(tudo.includes('31/10/2026') && !tudo.includes('01/10/2026'), 'a mais antiga é a que fica de fora');
 });
+
+test('A21 não exclui talhão, produto ou receita em uso', () => {
+  const a = pronto();
+  a.run(`DB.ordens = [{id:'o1',codigo:'OS-0001',numero:1,status:'aberta',talhao:'t1',receita:'r1',area_total:10}]`);
+  a.run(`deleteTalhao('t1')`);
+  assert.equal(a.toast().msg, 'Talhão com OS em aberto (OS-0001). Conclua ou cancele a OS antes de excluir.');
+  a.run(`deleteProduto('p1')`);
+  assert.equal(a.toast().msg, 'Produto usado na receita "Rec 1". Tire-o da receita antes de excluir.');
+  a.run(`deleteReceita('r1')`);
+  assert.equal(a.toast().msg, 'Receita ligada a OS em aberto (OS-0001). Conclua ou cancele a OS antes de excluir.');
+  assert.deepEqual(a.json('[DB.talhoes.length, DB.produtos.length, DB.receitas.length]'), [2, 1, 1]);
+  assert.equal(a.confirms.length, 0);
+  a.run(`DB.ordens[0].status = 'concluida'; deleteReceita('r1'); deleteProduto('p1'); deleteTalhao('t1'); deleteTalhao('t2')`);
+  assert.deepEqual(a.json('[DB.talhoes.length, DB.produtos.length, DB.receitas.length]'), [0, 0, 0]);
+});
