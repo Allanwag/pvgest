@@ -263,3 +263,16 @@ test('A15 OS exige talhão e prazo depois do início', () => {
   assert.equal(a.run('DB.ordens.length'), 0);
   assert.doesNotThrow(() => { a.form({ fOSTalhao: 't1', fOSArea: 5 }); a.run(`saveOrdem('nao-existe')`); });
 });
+
+test('A10 único gestor não troca o próprio perfil; com outro gestor, pode', () => {
+  const a = pronto();
+  const salvar = campos => { a.form({ fUNome: 'Gestor', fUPerfil: 'gestor', fUPin: '1234', ...campos }); a.run(`saveUser('u1')`); };
+  salvar({ fUPerfil: 'tratorista' });
+  assert.equal(a.toast().msg, 'Precisa existir pelo menos um gestor ativo');
+  assert.equal(a.run(`byId(DB.usuarios,'u1').perfil`), 'gestor');
+  salvar({ fUNome: 'Allan' });
+  assert.equal(a.el('hdrName').textContent, 'Allan');
+  a.run(`DB.usuarios.push({id:'u9',nome:'Outro',perfil:'gestor',pin:'9999',ativo:true})`);
+  salvar({ fUPerfil: 'agronomo' });
+  assert.equal(a.run(`byId(DB.usuarios,'u1').perfil`), 'agronomo');
+});

@@ -1908,7 +1908,18 @@ function saveUser(id) {
   if (!nome) { toast('Informe o nome','error'); return; }
   if (!/^\d{4}$/.test(pin)) { toast('PIN deve ter 4 dígitos','error'); return; }
   if (id) {
-    Object.assign(byId(DB.usuarios,id), { nome, perfil, pin });
+    const u = byId(DB.usuarios,id);
+    if (!u) { toast('Usuário não encontrado','error'); return; }
+    // Sem gestor ninguém abre as Configurações: o último gestor ativo não pode mudar de perfil
+    if (u.perfil==='gestor' && u.ativo && perfil!=='gestor' && DB.usuarios.filter(x=>x.perfil==='gestor' && x.ativo).length===1) {
+      toast('Precisa existir pelo menos um gestor ativo','error'); return;
+    }
+    const mudouPerfil = u.perfil !== perfil;
+    Object.assign(u, { nome, perfil, pin });
+    if (currentUser && currentUser.id===id) {
+      if (mudouPerfil) renderApp();
+      else document.getElementById('hdrName').textContent = u.nome;
+    }
   } else {
     DB.usuarios.push({ id:uid(), nome, perfil, pin, ativo:true });
   }
