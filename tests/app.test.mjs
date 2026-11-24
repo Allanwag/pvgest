@@ -293,3 +293,34 @@ test('A19 convite de instalação vira botão no menu', () => {
   assert.equal(a.el('menuInstall').classList.contains('hidden'), true);
   assert.doesNotThrow(() => a.run('instalarApp()'));
 });
+
+test('A12 saída de estoque não muda o preço; entrada muda', () => {
+  const a = pronto();
+  a.form({ fMTipo: 'saida', fMQtd: 1, fMPreco: 1, fMData: '2026-11-15' }); a.run(`saveMovimento('p1')`);
+  assert.equal(a.run('DB.produtos[0].preco'), 100);
+  a.form({ fMTipo: 'entrada', fMQtd: 1, fMPreco: 120, fMData: '2026-11-15' }); a.run(`saveMovimento('p1')`);
+  assert.equal(a.run('DB.produtos[0].preco'), 120);
+});
+
+test('A13 área acompanha a troca de talhão, mas não apaga o que foi digitado', () => {
+  const a = pronto();
+  for (const [sel, area, fn] of [['fATalhao', 'fAArea', 'autoFillArea'], ['fOSTalhao', 'fOSArea', 'osFillArea']]) {
+    a.form({ [sel]: 't1' }); a.run(`${fn}()`);
+    assert.equal(a.el(area).value, '10');
+    a.el(sel).value = 't2'; a.run(`${fn}()`);
+    assert.equal(a.el(area).value, '3');
+    a.el(area).value = '2.5'; a.el(sel).value = 't1'; a.run(`${fn}()`);
+    assert.equal(a.el(area).value, '2.5');
+  }
+});
+
+test('A20 ΔT nunca negativo e acompanha Temp/UR do formulário', () => {
+  const a = pronto();
+  assert.equal(a.run('calcDeltaT(26, 100)'), 0);
+  assert.equal(a.run('calcDeltaT(26, 55).toFixed(1)'), '6.4');
+  a.form({ fATemp: 30, fARh: 40, fADT: '6.4' }); a.run('recalcDTForm()');
+  assert.equal(a.el('fADT').value, '9.6');
+  a.run(`openNovaAplicacao('t1')`);
+  assert.match(a.el('modalSheet').innerHTML, /id="fATemp"[^>]*oninput="recalcDTForm\(\)"/);
+  assert.match(a.el('modalSheet').innerHTML, /id="fARh"[^>]*oninput="recalcDTForm\(\)"/);
+});

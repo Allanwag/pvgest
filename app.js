@@ -314,6 +314,8 @@ let dtT=26, dtRh=55, dtWind=8;
 function calcWetBulb(T,rh) {
   return T*Math.atan(0.151977*Math.pow(rh+8.313659,.5))+Math.atan(T+rh)-Math.atan(rh-1.676331)+0.00391838*Math.pow(rh,1.5)*Math.atan(0.023101*rh)-4.686035;
 }
+// ΔT nunca negativo (com UR perto de 100% a fórmula dá -0,05)
+function calcDeltaT(T,rh) { return Math.max(0, T - calcWetBulb(T,rh)); }
 function calcDewPoint(T,rh) {
   const a=17.27,b=237.7,al=((a*T)/(b+T))+Math.log(rh/100);
   return (b*al)/(a-al);
@@ -338,7 +340,7 @@ function windStatus(w) {
 function renderDT() {
   document.querySelectorAll('.fab').forEach(f=>f.remove());
   const wb = calcWetBulb(dtT,dtRh);
-  const dt = dtT - wb;
+  const dt = calcDeltaT(dtT,dtRh);
   const dp = calcDewPoint(dtT,dtRh);
   const vpd = calcVPD(dtT,dtRh);
   const s = dtStatus(dt);
@@ -422,7 +424,7 @@ function renderDT() {
 
 function updateDT() {
   const wb = calcWetBulb(dtT,dtRh);
-  const dt = dtT - wb;
+  const dt = calcDeltaT(dtT,dtRh);
   const dp = calcDewPoint(dtT,dtRh);
   const vpd = calcVPD(dtT,dtRh);
   const s = dtStatus(dt);
@@ -450,7 +452,7 @@ function updateDT() {
 
 function saveDTReading() {
   const wb = calcWetBulb(dtT,dtRh);
-  const dt = dtT - wb;
+  const dt = calcDeltaT(dtT,dtRh);
   const talhao = document.getElementById('dtTalhao')?.value || '';
   DB.leituras.unshift({ id:uid(), data:today(), dt:+dt.toFixed(1), temp:dtT, rh:dtRh, vento:dtWind, talhao, usuario:currentUser.id });
   if (DB.leituras.length > 100) DB.leituras = DB.leituras.slice(0,100);
@@ -749,7 +751,7 @@ function saveMovimento(produtoId) {
   if (preco < 0) { toast('Preço não pode ser negativo','error'); return; }
   if (tipo==='saida' && !estoqueCobre(p.estoque_atual, qtd)) { toast('Quantidade maior que o estoque atual','error'); return; }
   p.estoque_atual = arredQtd(toNum(p.estoque_atual) + (tipo==='entrada' ? qtd : -qtd));
-  if (preco) p.preco = preco;
+  if (tipo==='entrada' && preco) p.preco = preco;
   DB.movimentos.push({ id:uid(), produto:produtoId, tipo, qtd, preco, data, obs, usuario:currentUser.id });
   saveDB(); closeModal(); toast('Movimentação registrada!'); renderEstoque();
 }
@@ -1037,8 +1039,7 @@ function calcResult(receitaId) {
 function openNovaAplicacao(talhaoId) {
   const tOpts = `<option value="">— Selecione o talhão —</option>` + DB.talhoes.map(t=>`<option value="${t.id}" ${t.id===talhaoId?'selected':''}>${esc(t.nome)} — ${escAttr(t.area)} ha</option>`).join('');
   const rOpts = DB.receitas.map(r=>`<option value="${r.id}">${esc(r.nome)}</option>`).join('');
-  const wb = calcWetBulb(dtT,dtRh);
-  const dt = (dtT-wb).toFixed(1);
+  const dt = calcDeltaT(dtT,dtRh).toFixed(1);
 
   openModal(`
     <div class="modal-hdr"><span class="modal-title">💧 Nova Aplicação</span>
@@ -1062,9 +1063,9 @@ function openNovaAplicacao(talhaoId) {
         <div class="form-group"><label class="form-label">ΔT</label>
           <input class="form-input" id="fADT" type="number" step=".1" value="${dt}"></div>
         <div class="form-group"><label class="form-label">Temp (°C)</label>
-          <input class="form-input" id="fATemp" type="number" step=".5" value="${dtT}"></div>
+          <input class="form-input" id="fATemp" type="number" step=".5" value="${dtT}" oninput="recalcDTForm()"></div>
         <div class="form-group"><label class="form-label">UR (%)</label>
-          <input class="form-input" id="fARh" type="number" value="${dtRh}"></div>
+          <input class="form-input" id="fARh" type="number" value="${dtRh}" oninput="recalcDTForm()"></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Vento (km/h)</label>
@@ -1095,7 +1096,24 @@ function autoFillArea() {
   const sel = document.getElementById('fATalhao');
   if (!sel) return;
   const t = byId(DB.talhoes, sel.value);
-  if (t) { const a = document.getElementById('fAArea'); if (a&&!a.value) a.value=t.area; }
+  if (t) preencherAreaAuto(document.getElementById('fAArea'), t.area);
+}
+
+// Preenche a área do talhão quando o campo está vazio ou ainda tem o valor que ela mesma pôs antes;
+// o que o usuário digitou não é trocado
+function preencherAreaAuto(campo, area) {
+  if (!campo) return;
+  if (campo.value && campo.value !== campo.dataset.auto) return;
+  campo.value = String(area);
+  campo.dataset.auto = String(area);
+}
+
+// ΔT do formulário de aplicação acompanha Temp e UR digitadas
+function recalcDTForm() {
+  const T = parseFloat(document.getElementById('fATemp')?.value);
+  const rh = parseFloat(document.getElementById('fARh')?.value);
+  if (!Number.isFinite(T) || !Number.isFinite(rh) || rh <= 0) return;
+  document.getElementById('fADT').value = calcDeltaT(T, rh).toFixed(1);
 }
 
 // Nome da receita como foi aplicada; aplicações antigas (sem o campo) caem na receita atual
@@ -1232,8 +1250,7 @@ function deleteAplicacao(id) {
 function renderExecucao() {
   document.querySelectorAll('.fab').forEach(f=>f.remove());
   const el = document.getElementById('tab-execucao');
-  const wb = calcWetBulb(dtT,dtRh);
-  const dt = dtT-wb;
+  const dt = calcDeltaT(dtT,dtRh);
   const s = dtStatus(dt);
 
   el.innerHTML = `
@@ -1281,8 +1298,7 @@ function renderExecucao() {
 function updateExecucao() {
   const badge = document.getElementById('exBadge');
   if (!badge) return;
-  const wb = calcWetBulb(dtT,dtRh);
-  const dt = dtT-wb;
+  const dt = calcDeltaT(dtT,dtRh);
   const s = dtStatus(dt);
   badge.className = `badge ${s.cls}`; badge.textContent = s.label;
   const card = document.getElementById('exCard');
@@ -1498,9 +1514,8 @@ function openOrdemForm(id) {
 }
 
 function osFillArea() {
-  const opt = document.getElementById('fOSTalhao')?.selectedOptions?.[0];
-  const areaEl = document.getElementById('fOSArea');
-  if (opt?.dataset?.area && areaEl && !areaEl.value) areaEl.value = opt.dataset.area;
+  const t = byId(DB.talhoes, document.getElementById('fOSTalhao')?.value);
+  if (t) preencherAreaAuto(document.getElementById('fOSArea'), t.area);
 }
 
 // Mostra o ritmo (ha/dia) derivado do prazo quando o campo é deixado em branco
