@@ -384,3 +384,8 @@ test('A21 não exclui talhão, produto ou receita em uso', () => {
   a.run(`DB.ordens[0].status = 'concluida'; deleteReceita('r1'); deleteProduto('p1'); deleteTalhao('t1'); deleteTalhao('t2')`);
   assert.deepEqual(a.json('[DB.talhoes.length, DB.produtos.length, DB.receitas.length]'), [0, 0, 0]);
 });
+
+test('versão publicada: app.js?v=8 e cache pvgest-v12', () => {
+  assert.match(lerArquivo('index.html'), /<script src="app\.js\?v=8">/);
+  assert.match(lerArquivo('sw.js'), /const CACHE = 'pvgest-v12';/);
+});

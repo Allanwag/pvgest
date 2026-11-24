@@ -1,5 +1,5 @@
-const CACHE = 'pvgest-v11';
-const ASSETS = ['./', './index.html', './style.css', './app.js?v=7', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'pvgest-v12';
+const ASSETS = ['./', './index.html', './style.css', './app.js?v=8', './manifest.json', './icon-192.png', './icon-512.png'];
 // Libs de exportação (PDF/Excel) — precisam estar no cache para funcionar offline
 const CDN_ASSETS = [
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
