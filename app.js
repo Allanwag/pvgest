@@ -1342,25 +1342,35 @@ function osProgress(o) {
 const overdueOrdens  = () => DB.ordens.filter(o=>(o.status==='aberta'||o.status==='em_andamento') && osProgress(o).atrasada);
 const dueTodayOrdens = () => DB.ordens.filter(o=>(o.status==='aberta'||o.status==='em_andamento') && o.data_prazo===today());
 
-// Dispara notificação no aparelho para OS vencidas (uma vez por OS por dia)
-function notifyOverdue() {
+// Mostra um aviso no aparelho: pelo service worker (único jeito aceito no Chrome do Android) ou, sem ele, por new Notification.
+// Resolve false se o aviso não saiu.
+async function mostrarAvisoOS(titulo, opcoes) {
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+      const reg = await navigator.serviceWorker.ready;
+      await reg.showNotification(titulo, opcoes);
+      return true;
+    }
+    new Notification(titulo, opcoes);
+    return true;
+  } catch (e) { return false; }
+}
+
+// Dispara notificação no aparelho para OS vencidas (uma vez por OS por dia; só marca como avisada se o aviso saiu)
+async function notifyOverdue() {
   if (!('Notification' in window) || Notification.permission!=='granted') return;
   const t = today();
   DB.config.os_notif = DB.config.os_notif || {};
   let changed = false;
-  overdueOrdens().forEach(o=>{
-    if (DB.config.os_notif[o.id] !== t) {
-      const tal = byId(DB.talhoes, o.talhao);
-      try {
-        new Notification(`⏰ OS atrasada — ${o.codigo}`, {
-          body: `${o.tipo||'Serviço'}${tal?' · '+tal.nome:''} — prazo ${fmtDate(o.data_prazo)} venceu. ${Math.round(osProgress(o).pct)}% concluído.`,
-          tag: 'pvgest-os-'+o.id
-        });
-      } catch(e){}
-      DB.config.os_notif[o.id] = t;
-      changed = true;
-    }
-  });
+  for (const o of overdueOrdens()) {
+    if (DB.config.os_notif[o.id] === t) continue;
+    const tal = byId(DB.talhoes, o.talhao);
+    const saiu = await mostrarAvisoOS(`⏰ OS atrasada — ${o.codigo}`, {
+      body: `${o.tipo||'Serviço'}${tal?' · '+tal.nome:''} — prazo ${fmtDate(o.data_prazo)} venceu. ${Math.round(osProgress(o).pct)}% concluído.`,
+      tag: 'pvgest-os-'+o.id
+    });
+    if (saiu) { DB.config.os_notif[o.id] = t; changed = true; }
+  }
   if (changed) saveDB();
 }
 

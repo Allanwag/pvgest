@@ -198,3 +198,32 @@ test('A14 mês do relatório é o mês local', () => {
   a.run(`DB.aplicacoes = [{id:'x',data:'2026-11-30',talhao:'t1',area_ha:1,custo_total:0}]; renderRelatorios()`);
   assert.match(a.el('tab-relatorios').innerHTML, /Aplicações no mês<\/div><div class="stat-val">1</);
 });
+
+const comoAndroid = nav => ({
+  Notification: Object.assign(function () { throw new TypeError('Illegal constructor'); }, { permission: 'granted' }),
+  navigator: nav
+});
+const osVencida = a => a.run(`DB.ordens = [{id:'o1',codigo:'OS-0001',numero:1,status:'aberta',tipo:'Plantio',area_total:10,data_prazo:'2026-11-10'}]`);
+
+test('A8 aviso sai pelo service worker quando new Notification não é aceito', async () => {
+  const mostradas = [];
+  const a = pronto({ extras: comoAndroid({ serviceWorker: { register: () => Promise.resolve(), ready: Promise.resolve({ showNotification: t => { mostradas.push(t); return Promise.resolve(); } }) } }) });
+  osVencida(a);
+  await a.run('notifyOverdue()');
+  assert.equal(mostradas.length, 1);
+  assert.match(mostradas[0], /OS-0001/);
+  assert.equal(a.run('DB.config.os_notif.o1'), '2026-11-15');
+  await a.run('notifyOverdue()');
+  assert.equal(mostradas.length, 1); // uma vez por OS por dia
+});
+
+test('A8 aviso que não saiu não é marcado como enviado', async () => {
+  const a = pronto({ extras: comoAndroid({}) });
+  osVencida(a);
+  await a.run('notifyOverdue()');
+  assert.equal(a.run('(DB.config.os_notif || {}).o1'), undefined);
+});
+
+test('A8 sw.js trata o toque na notificação', () => {
+  assert.match(lerArquivo('sw.js'), /addEventListener\('notificationclick'/);
+});

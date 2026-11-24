@@ -48,3 +48,11 @@ self.addEventListener('fetch', e => {
     })
   );
 });
+// Toque num aviso (ex.: OS vencida): foca o app se já estiver aberto, senão abre
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(lista => {
+    const aberta = lista.find(c => 'focus' in c);
+    return aberta ? aberta.focus() : self.clients.openWindow('./');
+  }));
+});
