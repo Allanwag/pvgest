@@ -2214,8 +2214,22 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', ()=>navigator.serviceWorker.register('sw.js?v=31669a8').catch(()=>{}));
 }
 window.addEventListener('storage', e=>{ if (e.key === STORAGE_KEY && e.newValue) sincronizarDeOutraJanela(e.newValue); });
-let deferredPrompt;
-window.addEventListener('beforeinstallprompt', e=>{e.preventDefault();deferredPrompt=e;});
+// Convite de instalação do Chrome: guarda o evento e mostra o botão "Instalar app" no menu do usuário
+let deferredPrompt = null;
+function aoPoderInstalar(e) {
+  e.preventDefault();
+  deferredPrompt = e;
+  document.getElementById('menuInstall').classList.remove('hidden');
+}
+function instalarApp() {
+  const ev = deferredPrompt;
+  deferredPrompt = null;
+  document.getElementById('menuInstall').classList.add('hidden');
+  closeUserMenu();
+  if (ev) ev.prompt();
+}
+window.addEventListener('beforeinstallprompt', aoPoderInstalar);
+window.addEventListener('appinstalled', ()=>{ deferredPrompt = null; document.getElementById('menuInstall').classList.add('hidden'); });
 
 // ──────────── INIT ────────────
 loadDB();

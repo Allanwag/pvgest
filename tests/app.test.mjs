@@ -276,3 +276,20 @@ test('A10 único gestor não troca o próprio perfil; com outro gestor, pode', (
   salvar({ fUPerfil: 'agronomo' });
   assert.equal(a.run(`byId(DB.usuarios,'u1').perfil`), 'agronomo');
 });
+
+test('A11 sw.js pré-cacheia o mesmo endereço de app.js que o index.html pede', () => {
+  const src = lerArquivo('index.html').match(/<script src="(app\.js[^"]*)"/)[1];
+  assert.ok(lerArquivo('sw.js').includes(`'./${src}'`), `sw.js não tem './${src}' em ASSETS`);
+});
+
+test('A19 convite de instalação vira botão no menu', () => {
+  assert.match(lerArquivo('index.html'), /id="menuInstall" class="hidden" onclick="instalarApp\(\)"/);
+  const a = pronto();
+  a.el('menuInstall').classList.add('hidden');
+  a.run(`globalThis.__pediu = 0; aoPoderInstalar({ preventDefault() {}, prompt() { __pediu++; } })`);
+  assert.equal(a.el('menuInstall').classList.contains('hidden'), false);
+  a.run('instalarApp()');
+  assert.equal(a.run('__pediu'), 1);
+  assert.equal(a.el('menuInstall').classList.contains('hidden'), true);
+  assert.doesNotThrow(() => a.run('instalarApp()'));
+});
