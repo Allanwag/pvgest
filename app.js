@@ -505,12 +505,13 @@ function openTalhaoDetail(id) {
       </div>
       ${aps.length ? `<div class="sec-lbl mt-2">Histórico de aplicações</div>
       ${aps.map(a=>{
-        const r = byId(DB.receitas,a.receita);
+        const rNome = aplicReceitaNome(a), itensTxt = aplicItensTexto(a);
         return `<div class="list-item" style="cursor:default;border:1px solid var(--brd);border-radius:var(--rs);margin-bottom:.5rem">
           <div class="li-icon" style="background:var(--g50)">💧</div>
           <div class="li-body">
-            <div class="li-title">${r?esc(r.nome):'Sem receita'}</div>
-            <div class="li-sub">${fmtDate(a.data)} · ${escAttr(a.area_ha||t.area)} ha · ΔT ${a.delta_t||'—'}</div>
+            <div class="li-title">${rNome?esc(rNome):'Sem receita'}</div>
+            <div class="li-sub">${fmtDate(a.data)} · ${escAttr(a.area_ha||t.area)} ha · ΔT ${escAttr(a.delta_t||'—')}</div>
+            ${itensTxt?`<div class="li-sub">${esc(itensTxt)}</div>`:''}
           </div>
           <div class="li-right"><div class="li-value">${fmtMoney(a.custo_total||0)}</div></div>
         </div>`;}).join('')}` : '<div class="empty-state" style="padding:1.5rem 0"><div class="empty-sub">Nenhuma aplicação registrada</div></div>'}
@@ -1095,6 +1096,15 @@ function autoFillArea() {
   if (t) { const a = document.getElementById('fAArea'); if (a&&!a.value) a.value=t.area; }
 }
 
+// Nome da receita como foi aplicada; aplicações antigas (sem o campo) caem na receita atual
+function aplicReceitaNome(a) {
+  return a.receita_nome || byId(DB.receitas, a.receita)?.nome || '';
+}
+// 'Fung X 0,1 L/ha; Outro 2,0 kg/ha' — vazio em aplicação antiga
+function aplicItensTexto(a) {
+  return (a.itens||[]).map(i=>`${i.nome} ${fmtNum(i.dose)} ${doseUnitLabel(i.unidade)}`).join('; ');
+}
+
 function retrabalhoHtml(talhaoId) {
   const rt = checkRetrabalho(talhaoId);
   return rt ? `<div class="alert alert-warn">⚠️ <b>Possível retrabalho:</b> ${esc(rt.receita)} aplicado há ${rt.dias} dias neste talhão.</div>` : '';
@@ -1114,8 +1124,7 @@ function checkRetrabalho(talhaoId) {
   const last = aps[0];
   const dias = Math.floor((new Date()-new Date(last.data+'T00:00:00'))/(1000*60*60*24));
   if (dias < limite) {
-    const r = byId(DB.receitas,last.receita);
-    return { dias, receita: r?.nome||'Aplicação anterior' };
+    return { dias, receita: aplicReceitaNome(last)||'Aplicação anterior' };
   }
   return null;
 }
@@ -1143,25 +1152,29 @@ function saveAplicacao() {
   const aplicId = uid();
 
   // Calcula custo de produto da receita
-  let custo_produto = 0;
-  const consumos = [];
+  let custo_produto = 0, receitaNome = '', receitaVol = 0;
+  const consumos = [], itensAplic = [];
   if (receitaId) {
     const r = byId(DB.receitas, receitaId);
     if (!r) { toast('Receita selecionada não encontrada','error'); return; }
+    receitaNome = r.nome; receitaVol = r.volume_ha||200;
     for (const i of (r.itens||[])) {
       const p = byId(DB.produtos,i.produto);
       if (!p) { toast(`Produto da receita não encontrado: ${i.nome_livre||'item removido'}`,'error'); return; }
       const uso = doseUsage(i, area, p);
       if (uso.conversionMissing) {
-        toast(`Unidade incompatível em ${p.nome}: receita em ${uso.displayUnit}, estoque em ${escAttr(p.unidade)}`,'error');
+        toast(`Unidade incompatível em ${p.nome}: receita em ${uso.displayUnit}, estoque em ${p.unidade}`,'error');
         return;
       }
       if (!estoqueCobre(p.estoque_atual, uso.estoqueQtd)) {
-        toast(`Estoque insuficiente de ${p.nome}: precisa ${fmtNum(uso.estoqueQtd)} ${uso.estoqueUnit}, disponível ${fmtNum(p.estoque_atual)} ${escAttr(p.unidade)}`,'error');
+        toast(`Estoque insuficiente de ${p.nome}: precisa ${fmtNum(uso.estoqueQtd)} ${uso.estoqueUnit}, disponível ${fmtNum(p.estoque_atual)} ${p.unidade}`,'error');
         return;
       }
       custo_produto += uso.custo;
       consumos.push({ item:i, produto:p, uso });
+      // O que foi aplicado fica na própria aplicação: editar ou excluir a receita depois não muda o histórico
+      itensAplic.push({ produto:i.produto, nome:p.nome, dose:toNum(i.dose), unidade:doseUnitLabel(i.unidade),
+        qtd:arredQtd(uso.estoqueQtd), qtd_unidade:uso.estoqueUnit, custo:arredQtd(uso.custo) });
     }
     consumos.forEach(({item, produto, uso})=>{
       produto.estoque_atual = Math.max(0, arredQtd(toNum(produto.estoque_atual)-uso.estoqueQtd));
@@ -1178,6 +1191,7 @@ function saveAplicacao() {
 
   const aplic = {
     id:aplicId, data, talhao:talhaoId, receita:receitaId, area_ha:area,
+    ...(receitaId ? { receita_nome:receitaNome, receita_volume_ha:receitaVol, itens:itensAplic } : {}),
     delta_t, temp:parseFloat(document.getElementById('fATemp')?.value)||dtT,
     rh:parseFloat(document.getElementById('fARh')?.value)||dtRh,
     vento:parseFloat(document.getElementById('fAVento')?.value)||dtWind,
@@ -2015,8 +2029,7 @@ function exportPDF() {
   doc.text('Histórico de Aplicações', 14, y); y+=6;
   const apRows = DB.aplicacoes.slice(0,30).map(a=>{
     const t = byId(DB.talhoes,a.talhao);
-    const r = byId(DB.receitas,a.receita);
-    return [fmtDate(a.data), t?t.nome:'—', r?r.nome:'—', (a.area_ha||0)+' ha', a.delta_t||'—', fmtMoney(a.custo_total||0)];
+    return [fmtDate(a.data), t?t.nome:'—', aplicReceitaNome(a)||'—', (a.area_ha||0)+' ha', a.delta_t||'—', fmtMoney(a.custo_total||0)];
   });
   doc.autoTable({
     startY:y, margin:{left:14,right:14},
@@ -2072,11 +2085,10 @@ function exportExcel() {
   const wb = XLSX.utils.book_new();
 
   // Aba: Aplicações
-  const apData = [['Data','Talhão','Receita','Área (ha)','Delta T','Temp (°C)','UR (%)','Vento (km/h)','Equipamento','Operador','Custo Produto (R$)','Custo Operacional (R$)','Custo Total (R$)','Obs']];
+  const apData = [['Data','Talhão','Receita','Produtos','Área (ha)','Delta T','Temp (°C)','UR (%)','Vento (km/h)','Equipamento','Operador','Custo Produto (R$)','Custo Operacional (R$)','Custo Total (R$)','Obs']];
   DB.aplicacoes.forEach(a=>{
     const t = byId(DB.talhoes,a.talhao);
-    const r = byId(DB.receitas,a.receita);
-    apData.push([a.data, t?.nome||'—', r?.nome||'—', a.area_ha||0, a.delta_t||'', a.temp||'', a.rh||'', a.vento||'', a.equip||'', a.operador||'', a.custo_produto||0, a.custo_operacional||0, a.custo_total||0, a.obs||'']);
+    apData.push([a.data, t?.nome||'—', aplicReceitaNome(a)||'—', aplicItensTexto(a), a.area_ha||0, a.delta_t||'', a.temp||'', a.rh||'', a.vento||'', a.equip||'', a.operador||'', a.custo_produto||0, a.custo_operacional||0, a.custo_total||0, a.obs||'']);
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(apData), 'Aplicações');
 

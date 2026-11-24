@@ -134,3 +134,23 @@ test('A3 tela mostra o backup e cobra quando está velho', () => {
   assert.doesNotMatch(a.el('tab-relatorios').innerHTML, /backup/i);
   assert.equal(setup().run('diasSemBackup()'), null);
 });
+
+test('A5 aplicação guarda receita e produtos como foram aplicados', () => {
+  const a = pronto();
+  aplicar(a);
+  assert.deepEqual(a.json('DB.aplicacoes[0].itens'), [{ produto: 'p1', nome: 'Fung X', dose: 0.1, unidade: 'L/ha', qtd: 0.2, qtd_unidade: 'L', custo: 20 }]);
+  assert.equal(a.run('DB.aplicacoes[0].receita_volume_ha'), 150);
+  a.run(`DB.receitas[0].nome = 'Outra'; DB.receitas[0].itens[0].dose = 9;`);
+  assert.equal(a.run('aplicReceitaNome(DB.aplicacoes[0])'), 'Rec 1');
+  a.run(`deleteReceita('r1'); openTalhaoDetail('t2')`);
+  assert.match(a.el('modalSheet').innerHTML, /Rec 1/);
+  assert.match(a.el('modalSheet').innerHTML, /Fung X 0,1 L\/ha/);
+});
+
+test('A5 aplicação antiga, sem os campos novos, continua aparecendo', () => {
+  const a = pronto();
+  a.run(`DB.aplicacoes = [{id:'v1',data:'2026-10-01',talhao:'t2',receita:'r1',area_ha:2,custo_total:50}]; openTalhaoDetail('t2')`);
+  assert.equal(a.run('aplicReceitaNome(DB.aplicacoes[0])'), 'Rec 1');
+  assert.equal(a.run('aplicItensTexto(DB.aplicacoes[0])'), '');
+  assert.match(a.el('modalSheet').innerHTML, /Rec 1/);
+});
