@@ -29,15 +29,37 @@ const PERFIS = {
 // ──────────── DATABASE ────────────
 let DB = {};
 
+let _gravacaoFalhou = false;
 function loadDB() {
-  try { DB = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { DB = {}; }
-  if (!DB.version) DB = defaultDB();
+  let bruto = null;
+  try { bruto = localStorage.getItem(STORAGE_KEY); } catch {}
+  try { DB = JSON.parse(bruto) || {}; } catch { DB = {}; }
+  if (!DB || typeof DB !== 'object' || !DB.version) {
+    // Texto ilegível ou sem versão: guarda o original antes de recomeçar, para não perder dados por um erro de leitura
+    if (bruto) { try { localStorage.setItem(STORAGE_KEY + '_corrompido', bruto); } catch {} }
+    DB = defaultDB();
+  }
   normalizeDB();
   saveDB();
 }
 function saveDB() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }
-  catch { console.warn('PVGest: nao foi possivel salvar no armazenamento local.'); }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); _gravacaoFalhou = false; return true; }
+  catch { console.warn('PVGest: nao foi possivel salvar no armazenamento local.'); _gravacaoFalhou = true; return false; }
+}
+
+// Outra janela do app gravou: passa a usar os dados dela, sem regravar (regravar apagaria o que ela fez)
+function sincronizarDeOutraJanela(texto) {
+  let novo;
+  try { novo = JSON.parse(texto); } catch { return; }
+  if (!novo || typeof novo !== 'object' || !novo.version) return;
+  DB = novo; normalizeDB();
+  if (!currentUser) return;
+  const u = byId(DB.usuarios, currentUser.id);
+  if (!u || !u.ativo) { logout(); return; }
+  currentUser = u;
+  document.getElementById('hdrProp').textContent = DB.config.propriedade;
+  document.getElementById('hdrName').textContent = currentUser.nome;
+  if (document.getElementById('modalOverlay').classList.contains('hidden')) renderTabContent(curTab);
 }
 function defaultDB() {
   return {
@@ -119,6 +141,11 @@ function doseFactor(doseUn, prodUn) {
 let _toastTimer = null;
 function toast(msg, type='success') {
   const el = document.getElementById('toast');
+  // Gravação falhou: nenhum aviso de "salvo" pode passar por verdadeiro
+  if (_gravacaoFalhou && type !== 'error') {
+    msg = '⚠️ Não foi possível salvar neste aparelho. Os dados somem ao fechar — faça um backup em Configurações.';
+    type = 'error';
+  }
   if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
   el.textContent = msg; el.className = `toast ${type}`;
   _toastTimer = setTimeout(()=>{ el.classList.add('hidden'); _toastTimer = null; }, 2800);
@@ -2040,6 +2067,7 @@ function exportExcel() {
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', ()=>navigator.serviceWorker.register('sw.js?v=31669a8').catch(()=>{}));
 }
+window.addEventListener('storage', e=>{ if (e.key === STORAGE_KEY && e.newValue) sincronizarDeOutraJanela(e.newValue); });
 let deferredPrompt;
 window.addEventListener('beforeinstallprompt', e=>{e.preventDefault();deferredPrompt=e;});
 
