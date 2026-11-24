@@ -154,3 +154,30 @@ test('A5 aplicação antiga, sem os campos novos, continua aparecendo', () => {
   assert.equal(a.run('aplicItensTexto(DB.aplicacoes[0])'), '');
   assert.match(a.el('modalSheet').innerHTML, /Rec 1/);
 });
+
+test('A6 excluir aplicação devolve o estoque e tira os movimentos', () => {
+  const a = pronto();
+  aplicar(a);
+  assert.equal(a.run('DB.produtos[0].estoque_atual'), 4.8);
+  a.run('openTalhaoDetail("t2")');
+  assert.match(a.el('modalSheet').innerHTML, /deleteAplicacao\('/);
+  a.run('deleteAplicacao(DB.aplicacoes[0].id)');
+  assert.deepEqual(a.json('[DB.aplicacoes.length, DB.movimentos.length, DB.produtos[0].estoque_atual]'), [0, 0, 5]);
+  assert.equal(a.toast().msg, 'Aplicação excluída — estoque devolvido');
+});
+
+test('A6 aplicação antiga e produto já excluído não quebram a exclusão', () => {
+  const a = pronto();
+  a.run(`DB.aplicacoes = [{id:'v1',data:'2026-10-01',talhao:'t2',receita:'r1',area_ha:2}];
+    DB.movimentos = [{id:'m1',produto:'p1',tipo:'saida',qtd:0.2,aplicacao:'v1'},{id:'m2',produto:'sumiu',tipo:'saida',qtd:1,aplicacao:'v1'},{id:'m3',produto:'p1',tipo:'entrada',qtd:1}];`);
+  a.run(`deleteAplicacao('v1')`);
+  assert.deepEqual(a.json('[DB.aplicacoes.length, DB.movimentos.map(m=>m.id), DB.produtos[0].estoque_atual]'), [0, ['m3'], 5.2]);
+});
+
+test('A6 tratorista não exclui aplicação; "não" no confirm mantém', () => {
+  const a = pronto(); aplicar(a);
+  a.login('u3'); a.run('deleteAplicacao(DB.aplicacoes[0].id)');
+  assert.equal(a.run('DB.aplicacoes.length'), 1);
+  a.login('u1'); a.confirmar = false; a.run('deleteAplicacao(DB.aplicacoes[0].id)');
+  assert.equal(a.run('DB.aplicacoes.length'), 1);
+});

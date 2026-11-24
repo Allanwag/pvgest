@@ -223,6 +223,7 @@ function can(action) {
   const p = currentUser.perfil;
   const rules = {
     manageUsers:['gestor'], config:['gestor'], backup:['gestor'],
+    deleteAplicacao:['gestor','agronomo'],
     viewCosts:['gestor','agronomo'],
     manageReceitas:['gestor','agronomo'],
     manageEstoque:['gestor','agronomo'],
@@ -512,6 +513,7 @@ function openTalhaoDetail(id) {
             <div class="li-title">${rNome?esc(rNome):'Sem receita'}</div>
             <div class="li-sub">${fmtDate(a.data)} · ${escAttr(a.area_ha||t.area)} ha · ΔT ${escAttr(a.delta_t||'—')}</div>
             ${itensTxt?`<div class="li-sub">${esc(itensTxt)}</div>`:''}
+            ${can('deleteAplicacao')?`<div class="li-sub"><span onclick="deleteAplicacao('${a.id}')" style="color:var(--r600);cursor:pointer">excluir</span></div>`:''}
           </div>
           <div class="li-right"><div class="li-value">${fmtMoney(a.custo_total||0)}</div></div>
         </div>`;}).join('')}` : '<div class="empty-state" style="padding:1.5rem 0"><div class="empty-sub">Nenhuma aplicação registrada</div></div>'}
@@ -1205,6 +1207,24 @@ function saveAplicacao() {
   DB.aplicacoes.unshift(aplic);
   saveDB(); closeModal();
   toast(can('viewCosts') ? `Aplicação registrada! Custo: ${fmtMoney(custo_total)}` : 'Aplicação registrada!');
+  renderTabContent(curTab);
+}
+
+// Exclui a aplicação e devolve ao estoque o que ela baixou (pelos movimentos de saída ligados a ela)
+function deleteAplicacao(id) {
+  if (!can('deleteAplicacao')) { toast('Sem permissão','error'); return; }
+  const a = byId(DB.aplicacoes, id); if (!a) return;
+  if (!confirm('Excluir esta aplicação? O estoque baixado por ela volta para os produtos.')) return;
+  DB.movimentos.filter(m=>m.aplicacao===id).forEach(m=>{
+    const p = byId(DB.produtos, m.produto);
+    if (p) p.estoque_atual = arredQtd(toNum(p.estoque_atual) + toNum(m.qtd));
+  });
+  DB.movimentos = DB.movimentos.filter(m=>m.aplicacao!==id);
+  DB.aplicacoes = DB.aplicacoes.filter(x=>x.id!==id);
+  saveDB();
+  toast('Aplicação excluída — estoque devolvido');
+  closeModal();
+  if (byId(DB.talhoes, a.talhao)) openTalhaoDetail(a.talhao);
   renderTabContent(curTab);
 }
 
