@@ -136,13 +136,6 @@ function doseUsage(item, area, product) {
   };
 }
 
-// Converte a unidade da dose (ex.: mL/ha) para a unidade do produto em estoque (ex.: L)
-function doseFactor(doseUn, prodUn) {
-  const u = (doseUn||'').replace('/ha','');
-  if (!prodUn || u === prodUn) return 1;
-  const conv = { mL:{L:.001}, L:{mL:1000}, g:{kg:.001,t:.000001}, kg:{g:1000,t:.001} };
-  return conv[u]?.[prodUn] ?? 1;
-}
 
 let _toastTimer = null;
 function toast(msg, type='success') {
@@ -794,10 +787,9 @@ function renderReceitas() {
 
 function openReceitaDetail(id) {
   const r = byId(DB.receitas,id); if (!r) return;
-  const custo_ha = (r.itens||[]).reduce((s,i)=>{
-    const p = byId(DB.produtos,i.produto);
-    return s + i.dose*doseFactor(i.unidade,p?.unidade)*(p?.preco||0);
-  },0);
+  // Mesma conta da calculadora: doseUsage por 1 ha; item com unidade incompatível com o estoque fica fora do total
+  const usos = (r.itens||[]).map(i=>doseUsage(i, 1, byId(DB.produtos,i.produto)));
+  const custo_ha = usos.reduce((s,u)=>s + (u.conversionMissing ? 0 : u.custo), 0);
   openModal(`
     <div class="modal-hdr"><span class="modal-title">🧪 ${esc(r.nome)}</span>
       <button class="modal-close" onclick="closeModal()">✕</button></div>
@@ -807,14 +799,16 @@ function openReceitaDetail(id) {
         <div class="stat-card"><div class="stat-lbl">Custo produto/ha</div><div class="stat-val" style="font-size:1.1rem">${fmtMoney(custo_ha)}</div></div>
       </div>
       <div class="sec-lbl mt-2">Produtos na calda</div>
-      ${(r.itens||[]).map(i=>{
+      ${(r.itens||[]).map((i,n)=>{
         const p = byId(DB.produtos,i.produto);
-        const custo_item = i.dose*doseFactor(i.unidade,p?.unidade)*(p?.preco||0);
+        const uso = usos[n];
         return `<div class="prod-item">
           <div style="flex:1"><div style="font-size:.85rem;font-weight:600">${p?esc(p.nome):esc(i.nome_livre||'?')}</div>
             <div style="font-size:.72rem;color:var(--txt3)">${p?esc(p.classe||''):'—'}</div></div>
           <div style="text-align:right"><div style="font-size:.85rem;font-weight:600">${fmtNum(i.dose)} ${doseUnitLabel(i.unidade)}</div>
-            <div style="font-size:.72rem;color:var(--txt3)">${fmtMoney(custo_item)}/ha</div></div>
+            ${uso.conversionMissing
+              ? `<div style="font-size:.72rem;color:var(--r600)">⚠️ Unidade incompatível com o estoque</div>`
+              : `<div style="font-size:.72rem;color:var(--txt3)">${fmtMoney(uso.custo)}/ha</div>`}</div>
         </div>`;}).join('')}
       ${r.obs?`<div class="alert alert-info mt-2">📝 ${esc(r.obs)}</div>`:''}
     </div>
@@ -1739,6 +1733,18 @@ function deleteApontamento(id, ordemId) {
 }
 
 // ──────────── RELATÓRIOS ────────────
+// Volume de calda real vs. planejado: 'abaixo' (< 85%), 'acima' (> 115%), 'ok' ou null (sem dados para comparar).
+// O planejado é o da receita como foi aplicada; aplicação antiga usa o da receita atual.
+function desvioVolume(a) {
+  if (!a.vol_real || !a.area_ha) return null;
+  const volHa = a.receita_volume_ha || (byId(DB.receitas,a.receita) ? (byId(DB.receitas,a.receita).volume_ha||200) : 0);
+  if (!volHa) return null;
+  const planejado = volHa * a.area_ha;
+  if (a.vol_real < planejado*0.85) return 'abaixo';
+  if (a.vol_real > planejado*1.15) return 'acima';
+  return 'ok';
+}
+
 function renderRelatorios() {
   document.querySelectorAll('.fab').forEach(f=>f.remove());
   if (!can('viewRelatorios')) {
@@ -1756,13 +1762,8 @@ function renderRelatorios() {
   const atrasosMes = DB.apontamentos.filter(a=>a.status_dia==='atrasado' && a.data?.startsWith(mesAtual));
   const motivoMes = {};
   atrasosMes.forEach(a=>{ const m = a.motivo||'Outro'; motivoMes[m] = (motivoMes[m]||0)+1; });
-  const desperdicioApps = DB.aplicacoes.filter(a=>{
-    if (!a.receita||!a.vol_real||!a.area_ha) return false;
-    const r = byId(DB.receitas,a.receita);
-    if (!r) return false;
-    const planejado = (r.volume_ha||200)*a.area_ha;
-    return a.vol_real < planejado*0.85;
-  });
+  const volAbaixo = DB.aplicacoes.filter(a=>desvioVolume(a)==='abaixo');
+  const volAcima  = DB.aplicacoes.filter(a=>desvioVolume(a)==='acima');
 
   const dsb = diasSemBackup();
   const avisoBackup = dsb === null || dsb <= 30 ? ''
@@ -1780,7 +1781,8 @@ function renderRelatorios() {
       <div class="stat-card"><div class="stat-lbl">Aplicações no mês</div><div class="stat-val">${apMes.length}</div></div>
     </div>
 
-    ${desperdicioApps.length?`<div class="alert alert-warn">⚠️ <b>${desperdicioApps.length} aplicação(ões) com possível desperdício</b> — volume real abaixo de 85% do planejado.</div>`:''}
+    ${volAbaixo.length?`<div class="alert alert-warn">⚠️ <b>${volAbaixo.length} aplicação(ões) com volume abaixo de 85% do planejado</b> — possível subdose ou falha de cobertura.</div>`:''}
+    ${volAcima.length?`<div class="alert alert-warn">⚠️ <b>${volAcima.length} aplicação(ões) com volume acima de 115% do planejado</b> — possível desperdício de calda.</div>`:''}
 
     ${DB.ordens.length?`<div class="sec-lbl mt-2">Andamento de serviços</div>
     <div class="stats-grid">
@@ -2092,14 +2094,15 @@ function exportPDF() {
   // Aplicações
   if (y > 200) { doc.addPage(); y = 20; }
   doc.setFontSize(11); doc.setFont(undefined,'bold');
-  doc.text('Histórico de Aplicações', 14, y); y+=6;
-  const apRows = DB.aplicacoes.slice(0,30).map(a=>{
+  const apOrdenadas = DB.aplicacoes.slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+  doc.text(apOrdenadas.length>30 ? `Histórico de Aplicações (30 mais recentes de ${apOrdenadas.length})` : 'Histórico de Aplicações', 14, y); y+=6;
+  const apRows = apOrdenadas.slice(0,30).map(a=>{
     const t = byId(DB.talhoes,a.talhao);
     return [fmtDate(a.data), t?t.nome:'—', aplicReceitaNome(a)||'—', (a.area_ha||0)+' ha', a.delta_t||'—', fmtMoney(a.custo_total||0)];
   });
   doc.autoTable({
     startY:y, margin:{left:14,right:14},
-    head:[['Data','Talhão','Receita','Área','ΔT','Custo']],
+    head:[['Data','Talhão','Receita','Área','Delta T','Custo']],
     body:apRows.length?apRows:[['Nenhuma aplicação registrada','','','','','']],
     styles:{fontSize:8}, headStyles:{fillColor:[27,94,32]},
     alternateRowStyles:{fillColor:[240,244,236]}

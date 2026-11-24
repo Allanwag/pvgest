@@ -324,3 +324,48 @@ test('A20 ΔT nunca negativo e acompanha Temp/UR do formulário', () => {
   assert.match(a.el('modalSheet').innerHTML, /id="fATemp"[^>]*oninput="recalcDTForm\(\)"/);
   assert.match(a.el('modalSheet').innerHTML, /id="fARh"[^>]*oninput="recalcDTForm\(\)"/);
 });
+
+test('A16 ficha da receita avisa unidade incompatível em vez de inventar custo', () => {
+  const a = pronto();
+  a.run(`DB.produtos.push({id:'p2',nome:'Adj',unidade:'un',estoque_atual:10,preco:50});
+    DB.receitas.push({id:'r2',nome:'Rec 2',volume_ha:150,itens:[{produto:'p2',dose:2,unidade:'L/ha'}]}); openReceitaDetail('r2')`);
+  assert.match(a.el('modalSheet').innerHTML, /Unidade incompatível com o estoque/);
+  assert.doesNotMatch(a.el('modalSheet').innerHTML, /R\$\s100,00/);
+  a.run(`openReceitaDetail('r1')`);
+  assert.match(a.el('modalSheet').innerHTML, /R\$\s10,00\/ha/); // 0,1 L/ha × R$ 100
+  assert.equal(a.run('typeof doseFactor'), 'undefined');
+});
+
+test('A17 volume fora do planejado: abaixo e acima, cada um com seu aviso', () => {
+  const a = pronto();
+  const com = vol => { a.run(`DB.aplicacoes = [{id:'x',data:'2026-11-15',talhao:'t1',receita:'r1',receita_volume_ha:150,area_ha:10,vol_real:${vol}}]; renderRelatorios()`); return a.el('tab-relatorios').innerHTML; };
+  assert.match(com(3000), /acima de 115% do planejado/);
+  assert.match(com(1000), /abaixo de 85% do planejado/);
+  assert.doesNotMatch(com(1500), /do planejado<\/b>/);
+  a.run(`DB.receitas = []`);
+  assert.equal(a.run('desvioVolume(DB.aplicacoes[0])'), 'ok');
+  assert.equal(a.run(`desvioVolume({area_ha:10,vol_real:1000,receita:'sumiu'})`), null);
+});
+
+const pdfFalso = () => {
+  const visto = [];
+  class Doc {
+    constructor() { this.internal = { getNumberOfPages: () => 1 }; this.lastAutoTable = { finalY: 50 }; }
+    text(t) { visto.push(String(t)); }
+    autoTable(o) { visto.push(JSON.stringify([o.head, o.body])); }
+  }
+  for (const m of ['setFillColor', 'rect', 'setTextColor', 'setFontSize', 'setFont', 'addPage', 'setPage', 'save']) Doc.prototype[m] = () => {};
+  return { visto, jspdf: { jsPDF: Doc } };
+};
+
+test('A18 PDF sem Δ, ordenado e dizendo que cortou em 30', () => {
+  const pdf = pdfFalso();
+  const a = pronto({ extras: { jspdf: pdf.jspdf } });
+  a.run(`for (let i = 1; i <= 31; i++) DB.aplicacoes.push({id:'a'+i,data:'2026-10-'+String(i).padStart(2,'0'),talhao:'t1',area_ha:1,custo_total:0})`);
+  a.run('exportPDF()');
+  const tudo = pdf.visto.join('\n');
+  assert.match(a.toast().msg, /PDF gerado/);
+  assert.ok(!tudo.includes('Δ'), 'ainda há Δ no PDF');
+  assert.match(tudo, /30 mais recentes de 31/);
+  assert.ok(tudo.includes('31/10/2026') && !tudo.includes('01/10/2026'), 'a mais antiga é a que fica de fora');
+});
