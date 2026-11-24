@@ -76,3 +76,61 @@ test('A4 outra janela gravou: esta passa a usar os dados novos sem regravar', ()
   assert.equal(a.run('currentUser === DB.usuarios[0]'), true);
   assert.equal(a.store.get('pvgest_v1'), antes);
 });
+
+test('A3 backup restaura em outro aparelho', () => {
+  const a = pronto();
+  const arquivo = a.run('JSON.stringify(DB)');
+  const b = setup(); b.login();
+  assert.equal(b.run(`restaurarBackup(${JSON.stringify(arquivo)})`), true);
+  assert.equal(b.salvo().talhoes.length, 2);
+  assert.equal(b.run('currentUser'), null);
+  assert.ok(b.store.has('pvgest_v1_antes_restauracao'));
+  assert.equal(b.toast().msg, 'Backup restaurado. Entre de novo.');
+});
+
+test('A3 backup antigo, sem ordens nem apontamentos, é completado', () => {
+  const a = pronto();
+  const velho = a.salvo(); delete velho.ordens; delete velho.apontamentos;
+  assert.equal(a.run(`restaurarBackup(${JSON.stringify(JSON.stringify(velho))})`), true);
+  assert.deepEqual(a.json('[DB.ordens, DB.apontamentos]'), [[], []]);
+});
+
+test('A3 arquivos ruins são recusados sem mexer nos dados', () => {
+  const a = pronto();
+  const base = a.salvo();
+  const tenta = obj => a.run(`validarBackup(${JSON.stringify(typeof obj === 'string' ? obj : JSON.stringify(obj))}).erro`);
+  assert.equal(tenta('isto não é json'), 'Arquivo não é um backup do PVGest.');
+  assert.equal(tenta({ talhoes: [] }), 'Arquivo não é um backup do PVGest.');
+  assert.equal(tenta({ ...base, talhoes: 'x' }), 'Arquivo não é um backup do PVGest.');
+  assert.equal(tenta({ ...base, talhoes: [{ id: "x');alert(1)//", nome: 'T', area: 1 }] }), 'Backup com identificador inválido.');
+  assert.equal(tenta({ ...base, usuarios: base.usuarios.filter(u => u.perfil !== 'gestor') }), 'Backup sem gestor ativo: não daria para entrar depois de restaurar.');
+  assert.equal(a.run(`restaurarBackup('isto não é json')`), false);
+  assert.equal(a.run('DB.talhoes.length'), 2);
+});
+
+test('A3 restauração com gravação falhando não troca os dados', () => {
+  const a = pronto();
+  const outro = a.salvo(); outro.talhoes = [];
+  a.falharGravacao = true;
+  assert.equal(a.run(`restaurarBackup(${JSON.stringify(JSON.stringify(outro))})`), false);
+  assert.equal(a.run('DB.talhoes.length'), 2);
+  assert.equal(a.toast().erro, true);
+});
+
+test('A3 campo do banco não vira HTML', () => {
+  const a = pronto();
+  a.run(`DB.talhoes[0].area = '<b>x</b>'; DB.produtos[0].unidade = '<i>L</i>'; renderTalhoes(); renderEstoque(); renderDT();`);
+  for (const id of ['tab-talhoes', 'tab-estoque', 'tab-dt']) assert.doesNotMatch(a.el(id).innerHTML, /<b>x<\/b>|<i>L<\/i>/);
+});
+
+test('A3 tela mostra o backup e cobra quando está velho', () => {
+  const a = pronto();
+  assert.equal(a.run('diasSemBackup()'), Infinity);
+  a.run('renderRelatorios()'); assert.match(a.el('tab-relatorios').innerHTML, /Nenhum backup feito ainda/);
+  a.run(`DB.config.ultimo_backup = '2026-10-01'; renderRelatorios(); renderConfig();`);
+  assert.match(a.el('tab-relatorios').innerHTML, /Sem backup há 45 dias/);
+  assert.match(a.el('tab-config').innerHTML, /Último backup: 01\/10\/2026/);
+  a.run(`DB.config.ultimo_backup = '2026-11-10'; renderRelatorios();`);
+  assert.doesNotMatch(a.el('tab-relatorios').innerHTML, /backup/i);
+  assert.equal(setup().run('diasSemBackup()'), null);
+});

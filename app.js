@@ -90,6 +90,12 @@ const today = () => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('pt-BR') : '—';
+// Dias inteiros entre duas datas AAAA-MM-DD (positivo quando `ate` é depois); em UTC, sem erro de horário de verão
+function diasEntre(deISO, ateISO) {
+  const [y1,m1,d1] = String(deISO).split('-').map(Number);
+  const [y2,m2,d2] = String(ateISO).split('-').map(Number);
+  return Math.round((Date.UTC(y2,m2-1,d2) - Date.UTC(y1,m1-1,d1)) / 86400000);
+}
 const fmtNum  = n => (n||0).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:2});
 const fmtMoney = n => 'R$ ' + (n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const byId = (arr,id) => (arr||[]).find(x=>x.id===id);
@@ -169,7 +175,7 @@ function showUserSelect() {
     return `<div class="user-card" onclick="selectUser('${u.id}')">
       <div class="user-card-icon">${p.icon||'👤'}</div>
       <div><div class="user-card-name">${esc(u.nome)}</div>
-      <div class="user-card-role">${p.label||u.perfil}</div></div>
+      <div class="user-card-role">${esc(p.label||u.perfil)}</div></div>
     </div>`;
   }).join('');
   document.getElementById('userCards').innerHTML = cards;
@@ -216,7 +222,7 @@ function can(action) {
   if (!currentUser) return false;
   const p = currentUser.perfil;
   const rules = {
-    manageUsers:['gestor'], config:['gestor'],
+    manageUsers:['gestor'], config:['gestor'], backup:['gestor'],
     viewCosts:['gestor','agronomo'],
     manageReceitas:['gestor','agronomo'],
     manageEstoque:['gestor','agronomo'],
@@ -339,7 +345,7 @@ function renderDT() {
   const needlePct = Math.min(Math.max((dt/15)*100,0),100);
   const windPct = Math.min((dtWind/30)*100,100);
 
-  const talhaoOptions = DB.talhoes.map(t=>`<option value="${t.id}">${esc(t.nome)} (${t.area} ha)</option>`).join('');
+  const talhaoOptions = DB.talhoes.map(t=>`<option value="${t.id}">${esc(t.nome)} (${escAttr(t.area)} ha)</option>`).join('');
 
   document.getElementById('tab-dt').innerHTML = `
     <div class="page-hdr"><div><div class="page-title">Delta T</div><div class="page-sub">Janela de pulverização</div></div>
@@ -405,8 +411,8 @@ function renderDT() {
       return `<div class="list-item" style="cursor:default">
         <div class="li-icon" style="background:var(--g50)">🌡️</div>
         <div class="li-body">
-          <div class="li-title">ΔT ${l.dt} — ${l.talhao ? esc(byId(DB.talhoes,l.talhao)?.nome||'?') : 'Sem talhão'}</div>
-          <div class="li-sub">${fmtDate(l.data)} · T:${l.temp}°C · UR:${l.rh}% · Vento:${l.vento}km/h</div>
+          <div class="li-title">ΔT ${escAttr(l.dt)} — ${l.talhao ? esc(byId(DB.talhoes,l.talhao)?.nome||'?') : 'Sem talhão'}</div>
+          <div class="li-sub">${fmtDate(l.data)} · T:${escAttr(l.temp)}°C · UR:${escAttr(l.rh)}% · Vento:${escAttr(l.vento)}km/h</div>
         </div>
         <span class="badge ${st.cls}" style="font-size:.65rem">${st.label}</span>
       </div>`;}).join('')}</div>` : ''}
@@ -460,7 +466,7 @@ function renderTalhoes() {
         <div class="li-icon" style="background:var(--g50);color:var(--g800)">🗺️</div>
         <div class="li-body">
           <div class="li-title">${esc(t.nome)}</div>
-          <div class="li-sub">${t.area} ha · ${esc(t.cultura||'—')} · ${esc(t.safra||'—')}</div>
+          <div class="li-sub">${escAttr(t.area)} ha · ${esc(t.cultura||'—')} · ${esc(t.safra||'—')}</div>
         </div>
         <div class="li-right">
           <div class="li-value">${aps.length}</div>
@@ -492,7 +498,7 @@ function openTalhaoDetail(id) {
       <button class="modal-close" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
       <div class="stats-grid">
-        <div class="stat-card"><div class="stat-lbl">Área</div><div class="stat-val">${t.area}</div><div class="stat-sub">hectares</div></div>
+        <div class="stat-card"><div class="stat-lbl">Área</div><div class="stat-val">${escAttr(t.area)}</div><div class="stat-sub">hectares</div></div>
         <div class="stat-card"><div class="stat-lbl">Aplicações</div><div class="stat-val">${aps.length}</div><div class="stat-sub">total</div></div>
         <div class="stat-card"><div class="stat-lbl">Cultura</div><div class="stat-val" style="font-size:1.1rem">${esc(t.cultura||'—')}</div></div>
         <div class="stat-card"><div class="stat-lbl">Custo Total</div><div class="stat-val" style="font-size:1.1rem">${fmtMoney(totalCusto)}</div></div>
@@ -504,7 +510,7 @@ function openTalhaoDetail(id) {
           <div class="li-icon" style="background:var(--g50)">💧</div>
           <div class="li-body">
             <div class="li-title">${r?esc(r.nome):'Sem receita'}</div>
-            <div class="li-sub">${fmtDate(a.data)} · ${a.area_ha||t.area} ha · ΔT ${a.delta_t||'—'}</div>
+            <div class="li-sub">${fmtDate(a.data)} · ${escAttr(a.area_ha||t.area)} ha · ΔT ${a.delta_t||'—'}</div>
           </div>
           <div class="li-right"><div class="li-value">${fmtMoney(a.custo_total||0)}</div></div>
         </div>`;}).join('')}` : '<div class="empty-state" style="padding:1.5rem 0"><div class="empty-sub">Nenhuma aplicação registrada</div></div>'}
@@ -569,7 +575,7 @@ function renderEstoque() {
   const alertHtml = alertas.map(p=>{
     let h = '';
     if (p.estoque_min > 0 && p.estoque_atual <= p.estoque_min)
-      h += `<div class="alert alert-danger">⚠️ <b>${esc(p.nome)}</b> — Estoque baixo: ${fmtNum(p.estoque_atual)} ${p.unidade}</div>`;
+      h += `<div class="alert alert-danger">⚠️ <b>${esc(p.nome)}</b> — Estoque baixo: ${fmtNum(p.estoque_atual)} ${escAttr(p.unidade)}</div>`;
     const ex = expiryStatus(p);
     if (ex === 'vencido')
       h += `<div class="alert alert-danger">⛔ <b>${esc(p.nome)}</b> — VENCIDO em ${fmtDate(p.validade)}</div>`;
@@ -586,12 +592,12 @@ function renderEstoque() {
         <div class="li-icon" style="background:var(--g50);color:var(--g800)">📦</div>
         <div class="li-body">
           <div class="li-title">${esc(p.nome)}</div>
-          <div class="li-sub">${esc(p.classe||'—')} · ${fmtMoney(p.preco||0)}/${p.unidade}</div>
+          <div class="li-sub">${esc(p.classe||'—')} · ${fmtMoney(p.preco||0)}/${escAttr(p.unidade)}</div>
           <div class="stock-bar"><div class="stock-bar-fill" style="width:${(pct*100).toFixed(0)}%;background:${barColor}"></div></div>
         </div>
         <div class="li-right">
           <div class="li-value" style="color:${barColor}">${fmtNum(p.estoque_atual)}</div>
-          <div class="li-unit">${p.unidade}</div>
+          <div class="li-unit">${escAttr(p.unidade)}</div>
         </div>
       </div>
       <div class="li-actions">
@@ -697,9 +703,9 @@ function openMovimentoForm(produtoId) {
     <div class="modal-body">
       <div class="metric-grid" style="grid-template-columns:1fr 1fr;margin-bottom:1rem">
         <div class="metric-card"><div class="metric-lbl">Estoque Atual</div>
-          <div class="metric-val">${fmtNum(p.estoque_atual)}</div><div class="metric-unit">${p.unidade}</div></div>
+          <div class="metric-val">${fmtNum(p.estoque_atual)}</div><div class="metric-unit">${escAttr(p.unidade)}</div></div>
         <div class="metric-card"><div class="metric-lbl">Mínimo</div>
-          <div class="metric-val">${fmtNum(p.estoque_min)}</div><div class="metric-unit">${p.unidade}</div></div>
+          <div class="metric-val">${fmtNum(p.estoque_min)}</div><div class="metric-unit">${escAttr(p.unidade)}</div></div>
       </div>
       <div class="form-group"><label class="form-label">Tipo de movimentação</label>
         <select class="form-input" id="fMTipo" onchange="updateMovLabel()">
@@ -707,7 +713,7 @@ function openMovimentoForm(produtoId) {
           <option value="saida">📤 Saída (uso / descarte)</option>
         </select></div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label" id="fMQtdLbl">Quantidade (${p.unidade})</label>
+        <div class="form-group"><label class="form-label" id="fMQtdLbl">Quantidade (${escAttr(p.unidade)})</label>
           <input class="form-input" id="fMQtd" type="number" step=".1" min="0" placeholder="0.0"></div>
         <div class="form-group"><label class="form-label">Preço unitário (R$)</label>
           <input class="form-input" id="fMPreco" type="number" step=".01" min="0" value="${p.preco||''}"></div>
@@ -761,7 +767,7 @@ function renderReceitas() {
         <div class="li-icon" style="background:var(--g50);color:var(--g800)">🧪</div>
         <div class="li-body">
           <div class="li-title">${esc(r.nome)}</div>
-          <div class="li-sub">${esc(r.cultura||'—')} · ${esc(r.alvo||'—')} · ${r.volume_ha||200} L/ha</div>
+          <div class="li-sub">${esc(r.cultura||'—')} · ${esc(r.alvo||'—')} · ${escAttr(r?.volume_ha||200)} L/ha</div>
         </div>
         <div class="li-right"><div class="li-value">${(r.itens||[]).length}</div><div class="li-unit">produtos</div></div>
       </div>
@@ -792,7 +798,7 @@ function openReceitaDetail(id) {
       <button class="modal-close" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
       <div class="stats-grid">
-        <div class="stat-card"><div class="stat-lbl">Volume calda</div><div class="stat-val">${r.volume_ha||200}</div><div class="stat-sub">L/ha</div></div>
+        <div class="stat-card"><div class="stat-lbl">Volume calda</div><div class="stat-val">${escAttr(r?.volume_ha||200)}</div><div class="stat-sub">L/ha</div></div>
         <div class="stat-card"><div class="stat-lbl">Custo produto/ha</div><div class="stat-val" style="font-size:1.1rem">${fmtMoney(custo_ha)}</div></div>
       </div>
       <div class="sec-lbl mt-2">Produtos na calda</div>
@@ -836,7 +842,7 @@ function openReceitaForm(id) {
 function renderReceitaFormModal(id, r) {
   const hasProdutos = DB.produtos.length > 0;
   const prodOptions = hasProdutos
-    ? DB.produtos.map(p=>`<option value="${p.id}">${esc(p.nome)} (${p.unidade})</option>`).join('')
+    ? DB.produtos.map(p=>`<option value="${p.id}">${esc(p.nome)} (${escAttr(p.unidade)})</option>`).join('')
     : '<option value="">— Nenhum produto cadastrado —</option>';
   const itemsHtml = receitaItems.map((it,idx)=>{
     const p = byId(DB.produtos,it.produto);
@@ -857,7 +863,7 @@ function renderReceitaFormModal(id, r) {
         <div class="form-group"><label class="form-label">Cultura</label>
           <select class="form-input" id="fRCultura">${CULTURAS.map(c=>`<option ${(r?.cultura||'')==c?'selected':''}>${c}</option>`).join('')}</select></div>
         <div class="form-group"><label class="form-label">Volume calda (L/ha)</label>
-          <input class="form-input" id="fRVol" type="number" min="1" value="${r?.volume_ha||200}"></div>
+          <input class="form-input" id="fRVol" type="number" min="1" value="${escAttr(r?.volume_ha||200)}"></div>
       </div>
       <div class="form-group"><label class="form-label">Alvo (praga/doença)</label>
         <input class="form-input" id="fRAlvo" placeholder="Ex: Ferrugem asiática" value="${escAttr(r?.alvo||'')}"></div>
@@ -958,7 +964,7 @@ function deleteReceita(id) {
 
 function openCalculadora(receitaId) {
   const r = byId(DB.receitas, receitaId); if (!r) return;
-  const tOpts = DB.talhoes.map(t=>`<option value="${t.area}" data-id="${t.id}">${esc(t.nome)} — ${t.area} ha</option>`).join('');
+  const tOpts = DB.talhoes.map(t=>`<option value="${escAttr(t.area)}" data-id="${t.id}">${esc(t.nome)} — ${escAttr(t.area)} ha</option>`).join('');
   openModal(`
     <div class="modal-hdr"><span class="modal-title">📐 Calcular Receita</span>
       <button class="modal-close" onclick="closeModal()">✕</button></div>
@@ -1026,7 +1032,7 @@ function calcResult(receitaId) {
 
 // ──────────── APLICAÇÕES ────────────
 function openNovaAplicacao(talhaoId) {
-  const tOpts = `<option value="">— Selecione o talhão —</option>` + DB.talhoes.map(t=>`<option value="${t.id}" ${t.id===talhaoId?'selected':''}>${esc(t.nome)} — ${t.area} ha</option>`).join('');
+  const tOpts = `<option value="">— Selecione o talhão —</option>` + DB.talhoes.map(t=>`<option value="${t.id}" ${t.id===talhaoId?'selected':''}>${esc(t.nome)} — ${escAttr(t.area)} ha</option>`).join('');
   const rOpts = DB.receitas.map(r=>`<option value="${r.id}">${esc(r.nome)}</option>`).join('');
   const wb = calcWetBulb(dtT,dtRh);
   const dt = (dtT-wb).toFixed(1);
@@ -1066,9 +1072,9 @@ function openNovaAplicacao(talhaoId) {
       ${can('viewCosts')?`<div class="sec-lbl mt-2">Custos adicionais</div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Mão de obra (R$/ha)</label>
-          <input class="form-input" id="fAMO" type="number" step=".01" value="${DB.config.mao_obra_ha||0}"></div>
+          <input class="form-input" id="fAMO" type="number" step=".01" value="${escAttr(DB.config.mao_obra_ha||0)}"></div>
         <div class="form-group"><label class="form-label">Combustível (R$/ha)</label>
-          <input class="form-input" id="fAComb" type="number" step=".01" value="${DB.config.combustivel_ha||0}"></div>
+          <input class="form-input" id="fAComb" type="number" step=".01" value="${escAttr(DB.config.combustivel_ha||0)}"></div>
       </div>`:''}
       <div class="form-group"><label class="form-label">Operador</label>
         <input class="form-input" id="fAOper" value="${escAttr(currentUser.nome)}"></div>
@@ -1147,11 +1153,11 @@ function saveAplicacao() {
       if (!p) { toast(`Produto da receita não encontrado: ${i.nome_livre||'item removido'}`,'error'); return; }
       const uso = doseUsage(i, area, p);
       if (uso.conversionMissing) {
-        toast(`Unidade incompatível em ${p.nome}: receita em ${uso.displayUnit}, estoque em ${p.unidade}`,'error');
+        toast(`Unidade incompatível em ${p.nome}: receita em ${uso.displayUnit}, estoque em ${escAttr(p.unidade)}`,'error');
         return;
       }
       if (!estoqueCobre(p.estoque_atual, uso.estoqueQtd)) {
-        toast(`Estoque insuficiente de ${p.nome}: precisa ${fmtNum(uso.estoqueQtd)} ${uso.estoqueUnit}, disponível ${fmtNum(p.estoque_atual)} ${p.unidade}`,'error');
+        toast(`Estoque insuficiente de ${p.nome}: precisa ${fmtNum(uso.estoqueQtd)} ${uso.estoqueUnit}, disponível ${fmtNum(p.estoque_atual)} ${escAttr(p.unidade)}`,'error');
         return;
       }
       custo_produto += uso.custo;
@@ -1232,7 +1238,7 @@ function renderExecucao() {
       return `<div class="list-item" style="cursor:default">
         <div class="li-icon" style="background:var(--g50)">💧</div>
         <div class="li-body"><div class="li-title">${t?esc(t.nome):'Talhão removido'}</div>
-          <div class="li-sub">${fmtDate(a.data)} · ${a.area_ha} ha · ΔT ${a.delta_t}</div></div>
+          <div class="li-sub">${fmtDate(a.data)} · ${escAttr(a.area_ha)} ha · ΔT ${escAttr(a.delta_t)}</div></div>
       </div>`;}).join('')}</div>` : ''}
   `;
 }
@@ -1402,7 +1408,7 @@ function openOrdemForm(id) {
   if (!can('manageOrdens')) { toast('Apenas gestor/agrônomo abrem OS','error'); return; }
   const o = id ? byId(DB.ordens,id) : null;
   if (!DB.talhoes.length) { toast('Cadastre um talhão antes de abrir a OS','error'); navTo('talhoes'); return; }
-  const tOpts = `<option value="">— Selecione —</option>` + DB.talhoes.map(t=>`<option value="${t.id}" data-area="${t.area}" ${o?.talhao===t.id?'selected':''}>${esc(t.nome)} — ${t.area} ha</option>`).join('');
+  const tOpts = `<option value="">— Selecione —</option>` + DB.talhoes.map(t=>`<option value="${t.id}" data-area="${escAttr(t.area)}" ${o?.talhao===t.id?'selected':''}>${esc(t.nome)} — ${escAttr(t.area)} ha</option>`).join('');
   const rOpts = `<option value="">— Nenhuma —</option>` + DB.receitas.map(r=>`<option value="${r.id}" ${o?.receita===r.id?'selected':''}>${esc(r.nome)}</option>`).join('');
   const tratoristas = DB.usuarios.filter(u=>u.perfil==='tratorista' && u.ativo);
   const respOpts = `<option value="">— Não atribuído —</option>` + tratoristas.map(u=>`<option value="${u.id}" ${o?.responsavel===u.id?'selected':''}>${esc(u.nome)}</option>`).join('');
@@ -1423,7 +1429,7 @@ function openOrdemForm(id) {
         <input class="form-input" id="fOSDesc" placeholder="Ex: Aplicação de fungicida fase R1" value="${escAttr(o?.descricao||'')}"></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Início previsto</label>
-          <input class="form-input" id="fOSInicio" type="date" value="${o?.data_inicio||today()}" onchange="osRitmoHint()"></div>
+          <input class="form-input" id="fOSInicio" type="date" value="${escAttr(o?.data_inicio||today())}" onchange="osRitmoHint()"></div>
         <div class="form-group"><label class="form-label">Prazo final</label>
           <input class="form-input" id="fOSPrazo" type="date" value="${o?.data_prazo||''}" onchange="osRitmoHint()"></div>
       </div>
@@ -1689,9 +1695,14 @@ function renderRelatorios() {
     return a.vol_real < planejado*0.85;
   });
 
+  const dsb = diasSemBackup();
+  const avisoBackup = dsb === null || dsb <= 30 ? ''
+    : `<div class="alert alert-warn">⚠️ ${dsb === Infinity ? 'Nenhum backup feito ainda.' : `Sem backup há ${dsb} dias.`} Os dados ficam só neste aparelho — faça um em Configurações.</div>`;
+
   el.innerHTML = `
     <div class="page-hdr"><div><div class="page-title">Relatórios</div>
       <div class="page-sub">Visão geral da propriedade</div></div></div>
+    ${avisoBackup}
 
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-lbl">Total aplicado</div><div class="stat-val">${fmtNum(totalHa)}</div><div class="stat-sub">hectares</div></div>
@@ -1750,7 +1761,7 @@ function renderConfig() {
     return `<div class="list-item">
       <div class="li-icon">${p.icon||'👤'}</div>
       <div class="li-body"><div class="li-title">${esc(u.nome)}</div>
-        <div class="li-sub">${p.label||u.perfil} · PIN: ${'●'.repeat(u.pin?.length||4)}</div></div>
+        <div class="li-sub">${esc(p.label||u.perfil)} · PIN: ${'●'.repeat(u.pin?.length||4)}</div></div>
       <div style="display:flex;gap:.5rem">
         <button class="btn-icon" onclick="openUserForm('${u.id}')">✏️</button>
         ${u.id!==currentUser.id?`<button class="btn-icon" onclick="toggleUserActive('${u.id}')">${u.ativo?'🔒':'🔓'}</button>`:''}</div>
@@ -1767,17 +1778,25 @@ function renderConfig() {
         <input class="form-input" id="cfgProp" value="${escAttr(DB.config.propriedade)}"></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Mão de obra (R$/ha)</label>
-          <input class="form-input" id="cfgMO" type="number" value="${DB.config.mao_obra_ha||0}"></div>
+          <input class="form-input" id="cfgMO" type="number" value="${escAttr(DB.config.mao_obra_ha||0)}"></div>
         <div class="form-group"><label class="form-label">Combustível (R$/ha)</label>
-          <input class="form-input" id="cfgComb" type="number" value="${DB.config.combustivel_ha||0}"></div>
+          <input class="form-input" id="cfgComb" type="number" value="${escAttr(DB.config.combustivel_ha||0)}"></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Depreciação (R$/ha)</label>
-          <input class="form-input" id="cfgDep" type="number" value="${DB.config.depreciacao_ha||0}"></div>
+          <input class="form-input" id="cfgDep" type="number" value="${escAttr(DB.config.depreciacao_ha||0)}"></div>
         <div class="form-group"><label class="form-label">Retrabalho (dias)</label>
-          <input class="form-input" id="cfgRet" type="number" value="${DB.config.retrabalho_dias||21}"></div>
+          <input class="form-input" id="cfgRet" type="number" value="${escAttr(DB.config.retrabalho_dias||21)}"></div>
       </div>
       <button class="btn btn-primary btn-block" onclick="saveConfig()">💾 Salvar Configurações</button>
+    </div>
+
+    <div class="sec-lbl">Backup</div>
+    <div class="card card-body mb-2">
+      <div class="form-hint" style="margin-bottom:.75rem">${DB.config.ultimo_backup ? `Último backup: ${fmtDate(DB.config.ultimo_backup)}` : 'Nenhum backup feito ainda'}. Os dados ficam só neste aparelho.</div>
+      <button class="btn btn-primary btn-block" onclick="exportBackup()">💾 Baixar backup</button>
+      <button class="btn btn-outline btn-block" onclick="document.getElementById('fBackup').click()">📂 Restaurar backup</button>
+      <input type="file" id="fBackup" accept=".json,application/json" class="hidden" onchange="lerArquivoBackup(this)">
     </div>
 
     <div class="sec-lbl">Usuários</div>
@@ -1846,6 +1865,70 @@ function toggleUserActive(id) {
   const u = byId(DB.usuarios,id); if (!u) return;
   u.ativo = !u.ativo;
   saveDB(); toast(u.ativo?'Usuário ativado':'Usuário bloqueado'); renderConfig();
+}
+
+// ──────────── BACKUP ────────────
+const LISTAS_DB = ['usuarios','talhoes','produtos','receitas','aplicacoes','movimentos','leituras','ordens','apontamentos'];
+
+// Confere se o texto é um backup do PVGest (o próprio conteúdo de pvgest_v1) antes de tocar nos dados
+function validarBackup(texto) {
+  let d;
+  try { d = JSON.parse(texto); } catch { d = null; }
+  const naoE = { ok:false, erro:'Arquivo não é um backup do PVGest.' };
+  if (!d || typeof d !== 'object' || Array.isArray(d) || typeof d.version !== 'number') return naoE;
+  for (const k of LISTAS_DB) if (d[k] !== undefined && !Array.isArray(d[k])) return naoE;
+  // ids vão para atributos onclick: só caracteres seguros
+  const idOk = /^[A-Za-z0-9_-]{1,40}$/;
+  for (const k of LISTAS_DB) for (const r of (d[k]||[])) {
+    if (!r || typeof r !== 'object' || typeof r.id !== 'string' || !idOk.test(r.id)) return { ok:false, erro:'Backup com identificador inválido.' };
+  }
+  if ((d.usuarios||[]).length && !d.usuarios.some(u=>u.perfil==='gestor' && u.ativo && /^\d{4}$/.test(String(u.pin)))) {
+    return { ok:false, erro:'Backup sem gestor ativo: não daria para entrar depois de restaurar.' };
+  }
+  return { ok:true, dados:d };
+}
+
+function restaurarBackup(texto) {
+  const v = validarBackup(texto);
+  if (!v.ok) { toast(v.erro,'error'); return false; }
+  if (!confirm('Restaurar este backup? Os dados atuais deste aparelho serão substituídos.')) return false;
+  try {
+    const antes = localStorage.getItem(STORAGE_KEY);
+    if (antes) localStorage.setItem(STORAGE_KEY + '_antes_restauracao', antes);
+  } catch {}
+  const anterior = DB;
+  DB = v.dados; normalizeDB();
+  if (!saveDB()) { DB = anterior; toast('Não foi possível gravar o backup neste aparelho.','error'); return false; }
+  logout();
+  toast('Backup restaurado. Entre de novo.');
+  return true;
+}
+
+function exportBackup() {
+  if (!can('backup')) { toast('Sem permissão','error'); return; }
+  DB.config.ultimo_backup = today();
+  saveDB();
+  const url = URL.createObjectURL(new Blob([JSON.stringify(DB)], { type:'application/json' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = `PVGest_backup_${today()}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  toast('Backup baixado!');
+  renderConfig();
+}
+
+function lerArquivoBackup(input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = ()=>{ restaurarBackup(String(rd.result)); input.value = ''; };
+  rd.readAsText(f);
+}
+
+// null = banco vazio (nada a perder); Infinity = nunca fez; senão dias desde o último
+function diasSemBackup() {
+  if (!DB.talhoes.length && !DB.produtos.length && !DB.aplicacoes.length) return null;
+  const ub = DB.config.ultimo_backup;
+  return ub ? diasEntre(ub, today()) : Infinity;
 }
 
 // ──────────── FAB MANAGER ────────────
