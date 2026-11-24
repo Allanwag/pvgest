@@ -1296,7 +1296,8 @@ function updateExecucao() {
 }
 
 // ──────────── ORDENS DE SERVIÇO ────────────
-const nextOsNumero = () => DB.ordens.reduce((m,o)=>Math.max(m,o.numero||0),0)+1;
+// Número da próxima OS: nunca reaproveita o de uma OS excluída (DB.config.os_seq guarda o último usado)
+const nextOsNumero = () => Math.max(DB.config.os_seq||0, DB.ordens.reduce((m,o)=>Math.max(m,o.numero||0),0)) + 1;
 const osCodigo = n => 'OS-'+String(n).padStart(4,'0');
 
 // Ritmo planejado (ha/dia): usa o informado ou deriva da janela início→prazo
@@ -1523,6 +1524,10 @@ function saveOrdem(id) {
   const descricao = document.getElementById('fOSDesc').value.trim();
   const area = parseFloat(document.getElementById('fOSArea').value)||0;
   if (!area || area<=0) { toast('Informe a área planejada','error'); return; }
+  if (!talhao) { toast('Selecione o talhão','error'); return; }
+  const inicio = document.getElementById('fOSInicio').value, prazo = document.getElementById('fOSPrazo').value;
+  if (inicio && prazo && prazo < inicio) { toast('Prazo final não pode ser antes do início','error'); return; }
+  if (id && !byId(DB.ordens,id)) { toast('OS não encontrada','error'); return; }
   const data = {
     talhao, tipo, descricao, area_total:area,
     data_inicio:document.getElementById('fOSInicio').value,
@@ -1537,6 +1542,7 @@ function saveOrdem(id) {
     const stv = document.getElementById('fOSStatus')?.value; if (stv) o.status = stv;
   } else {
     const n = nextOsNumero();
+    DB.config.os_seq = n;
     DB.ordens.push({ id:uid(), numero:n, codigo:osCodigo(n), status:'aberta', ...data, criado_por:currentUser.id, criado_em:today() });
   }
   saveDB(); closeModal(); toast(id?'OS atualizada!':`OS aberta!`); renderOrdens();
@@ -1682,7 +1688,11 @@ function saveApontamento(ordemId) {
   const area = parseFloat(document.getElementById('fAPArea').value)||0;
   const desc = document.getElementById('fAPDesc').value.trim();
   const status_dia = document.querySelector('input[name="apStatus"]:checked')?.value || 'no_prazo';
+  if (area<0) { toast('Área feita não pode ser negativa','error'); return; }
+  if (data > today()) { toast('Data do apontamento não pode ser futura','error'); return; }
   if (area<=0 && !desc) { toast('Informe a área feita ou descreva o serviço','error'); return; }
+  const restante = Math.max(0, (o.area_total||0) - osProgress(o).areaFeita);
+  if (area > restante + 0.05 && !confirm(`Área acima do restante da OS (${fmtNum(restante)} ha). Registrar mesmo assim?`)) return;
   const ap = {
     id:uid(), ordem:ordemId, data, area_feita:area,
     horas:parseFloat(document.getElementById('fAPHoras').value)||0,

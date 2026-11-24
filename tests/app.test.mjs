@@ -227,3 +227,39 @@ test('A8 aviso que não saiu não é marcado como enviado', async () => {
 test('A8 sw.js trata o toque na notificação', () => {
   assert.match(lerArquivo('sw.js'), /addEventListener\('notificationclick'/);
 });
+
+const abrirOS = (a, campos) => { a.form({ fOSTalhao: 't1', fOSTipo: 'Plantio', fOSArea: 5, fOSInicio: '2026-11-15', ...campos }); a.run(`saveOrdem('')`); };
+
+test('A9 apontamento recusa área negativa, data futura e pergunta acima do restante', () => {
+  const a = pronto(); abrirOS(a, { fOSArea: 10 });
+  const id = a.run('DB.ordens[0].id');
+  const apontar = campos => { a.form({ fAPData: '2026-11-15', ...campos }); a.run(`saveApontamento('${id}')`); };
+  apontar({ fAPArea: -5, fAPDesc: 'x' });
+  assert.equal(a.toast().msg, 'Área feita não pode ser negativa');
+  apontar({ fAPArea: 2, fAPData: '2026-11-16' });
+  assert.equal(a.toast().msg, 'Data do apontamento não pode ser futura');
+  a.confirmar = false; apontar({ fAPArea: 500 });
+  assert.match(a.confirms.at(-1), /Área acima do restante da OS \(10,0 ha\)/);
+  assert.equal(a.run('DB.apontamentos.length'), 0);
+  a.confirmar = true; apontar({ fAPArea: 10 });
+  assert.equal(a.run('DB.apontamentos.length'), 1);
+  assert.equal(a.confirms.filter(c => /acima do restante/.test(c)).length, 1);
+});
+
+test('A15 número de OS não é reaproveitado', () => {
+  const a = pronto();
+  abrirOS(a); abrirOS(a);
+  a.run('deleteOrdem(DB.ordens[1].id)');
+  abrirOS(a);
+  assert.deepEqual(a.json('DB.ordens.map(o => o.codigo)'), ['OS-0001', 'OS-0003']);
+});
+
+test('A15 OS exige talhão e prazo depois do início', () => {
+  const a = pronto();
+  abrirOS(a, { fOSTalhao: '' });
+  assert.equal(a.toast().msg, 'Selecione o talhão');
+  abrirOS(a, { fOSPrazo: '2026-11-10' });
+  assert.equal(a.toast().msg, 'Prazo final não pode ser antes do início');
+  assert.equal(a.run('DB.ordens.length'), 0);
+  assert.doesNotThrow(() => { a.form({ fOSTalhao: 't1', fOSArea: 5 }); a.run(`saveOrdem('nao-existe')`); });
+});
