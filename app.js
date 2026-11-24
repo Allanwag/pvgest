@@ -1154,8 +1154,7 @@ function saveAplicacao() {
 
   DB.aplicacoes.unshift(aplic);
   saveDB(); closeModal();
-  if (semEstoque.length) toast(`Aplicação registrada — estoque insuficiente: ${semEstoque.join(', ')}`,'error');
-  else toast(`Aplicação registrada! Custo: ${fmtMoney(custo_total)}`);
+  toast(can('viewCosts') ? `Aplicação registrada! Custo: ${fmtMoney(custo_total)}` : 'Aplicação registrada!');
   renderTabContent(curTab);
 }
 
