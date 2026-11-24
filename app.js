@@ -77,6 +77,9 @@ const toNum = (v, fallback=0) => {
   const n = parseFloat(v);
   return Number.isFinite(n) ? n : fallback;
 };
+// Quantidades de estoque: 6 casas evitam resíduo de ponto flutuante (0,1 × 3 = 0,30000000000000004)
+const arredQtd = n => Math.round(toNum(n) * 1e6) / 1e6;
+const estoqueCobre = (disponivel, necessario) => arredQtd(disponivel) >= arredQtd(necessario);
 const UNIT_META = {
   L:{group:'volume', factor:1}, mL:{group:'volume', factor:0.001},
   kg:{group:'mass', factor:1}, g:{group:'mass', factor:0.001}, t:{group:'mass', factor:1000},
@@ -708,8 +711,8 @@ function saveMovimento(produtoId) {
   const obs   = document.getElementById('fMObs').value;
   if (!qtd || qtd<=0) { toast('Informe a quantidade','error'); return; }
   if (preco < 0) { toast('Preço não pode ser negativo','error'); return; }
-  if (tipo==='saida' && qtd>p.estoque_atual) { toast('Quantidade maior que o estoque atual','error'); return; }
-  p.estoque_atual += tipo==='entrada' ? qtd : -qtd;
+  if (tipo==='saida' && !estoqueCobre(p.estoque_atual, qtd)) { toast('Quantidade maior que o estoque atual','error'); return; }
+  p.estoque_atual = arredQtd(toNum(p.estoque_atual) + (tipo==='entrada' ? qtd : -qtd));
   if (preco) p.preco = preco;
   DB.movimentos.push({ id:uid(), produto:produtoId, tipo, qtd, preco, data, obs, usuario:currentUser.id });
   saveDB(); closeModal(); toast('Movimentação registrada!'); renderEstoque();
@@ -963,7 +966,7 @@ function calcResult(receitaId) {
   const itens = (r.itens||[]).map(i=>{
     const p = byId(DB.produtos,i.produto);
     const usage = doseUsage(i, area, p);
-    const estOk = !p || (!usage.conversionMissing && toNum(p.estoque_atual) >= usage.estoqueQtd);
+    const estOk = !p || (!usage.conversionMissing && estoqueCobre(p.estoque_atual, usage.estoqueQtd));
     return { p, ...usage, estOk, i };
   });
   const totalCusto = itens.reduce((s,i)=>s+i.custo,0);
@@ -1120,7 +1123,7 @@ function saveAplicacao() {
         toast(`Unidade incompatível em ${p.nome}: receita em ${uso.displayUnit}, estoque em ${p.unidade}`,'error');
         return;
       }
-      if (toNum(p.estoque_atual) < uso.estoqueQtd) {
+      if (!estoqueCobre(p.estoque_atual, uso.estoqueQtd)) {
         toast(`Estoque insuficiente de ${p.nome}: precisa ${fmtNum(uso.estoqueQtd)} ${uso.estoqueUnit}, disponível ${fmtNum(p.estoque_atual)} ${p.unidade}`,'error');
         return;
       }
@@ -1128,7 +1131,7 @@ function saveAplicacao() {
       consumos.push({ item:i, produto:p, uso });
     }
     consumos.forEach(({item, produto, uso})=>{
-      produto.estoque_atual = Math.max(0, toNum(produto.estoque_atual)-uso.estoqueQtd);
+      produto.estoque_atual = Math.max(0, arredQtd(toNum(produto.estoque_atual)-uso.estoqueQtd));
       DB.movimentos.push({
         id:uid(), produto:item.produto, tipo:'saida', qtd:uso.estoqueQtd, preco:toNum(produto.preco),
         data, aplicacao:aplicId, obs:`Aplicação em ${byId(DB.talhoes,talhaoId)?.nome}`,
